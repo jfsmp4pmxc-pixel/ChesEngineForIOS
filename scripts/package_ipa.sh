@@ -5,7 +5,8 @@
 # the Python runtime: Python.framework plus the standard library, with every
 # extension module (.so) moved into its own framework as CPython's iOS
 # loader expects. Nothing is signed; re-sign the IPA with your own tool.
-set -euo pipefail
+set -eEo pipefail
+trap 'echo "package_ipa.sh failed at line $LINENO" >&2' ERR
 
 APP="$1"
 OUT="$2"
@@ -27,8 +28,19 @@ if [ -d "$PY/Python.framework" ] && [ -d "$PY/lib" ]; then
   cp -R "$PY/Python.framework" "$BUNDLE/Frameworks/Python.framework"
   cp -R "$PY/lib" "$BUNDLE/python/lib"
 
-  VER_DIR="$(ls -1 "$BUNDLE/python/lib" | grep '^python3' | head -n1)"
+  echo "Contents of python/lib:"
+  ls -la "$BUNDLE/python/lib" || true
+
+  VER_DIR=""
+  for d in "$BUNDLE/python/lib"/python3*; do
+    if [ -d "$d" ]; then VER_DIR="$(basename "$d")"; break; fi
+  done
+  if [ -z "$VER_DIR" ]; then
+    echo "No python3.x folder found in the bundled standard library; skipping Python." >&2
+    rm -rf "$BUNDLE/python" "$BUNDLE/Frameworks/Python.framework"
+  else
   STDLIB="$BUNDLE/python/lib/$VER_DIR"
+  echo "Python standard library: $VER_DIR"
 
   # Trim what a chess bot never needs.
   for d in test tests idlelib tkinter turtledemo ensurepip lib2to3 pydoc_data; do
@@ -39,7 +51,7 @@ if [ -d "$PY/Python.framework" ] && [ -d "$PY/lib" ]; then
   # Move each extension module into a framework and leave a .fwork pointer.
   DYNLOAD="$STDLIB/lib-dynload"
   if [ -d "$DYNLOAD" ]; then
-    find "$DYNLOAD" -name '*.so' | while IFS= read -r so; do
+    while IFS= read -r so; do
       file="$(basename "$so")"
       module="${file%%.*}"
       fw="$BUNDLE/Frameworks/$module.framework"
@@ -65,7 +77,8 @@ PLIST
       mv "$so" "$fw/$module"
       echo "Frameworks/$module.framework/$module" > "${so%.so}.fwork"
       echo "python/lib/$VER_DIR/lib-dynload/${file%.so}.fwork" > "$fw/$module.origin"
-    done
+    done < <(find "$DYNLOAD" -name '*.so')
+  fi
   fi
 else
   echo "No Python runtime in build/python: building the IPA without it."
