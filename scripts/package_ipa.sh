@@ -10,6 +10,9 @@ trap 'echo "package_ipa.sh failed at line $LINENO" >&2' ERR
 
 APP="$1"
 OUT="$2"
+# The zip step runs after a cd into a temp dir, so OUT must be absolute.
+mkdir -p "$(dirname "$OUT")"
+OUT="$(cd "$(dirname "$OUT")" && pwd)/$(basename "$OUT")"
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 PY="$ROOT/build/python"
 
