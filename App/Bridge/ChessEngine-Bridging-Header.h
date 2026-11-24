@@ -1,0 +1,1 @@
+#include "StockfishBridge.h"

@@ -1,0 +1,90 @@
+name: Build unsigned IPA
+
+on:
+  push:
+    branches: ["**"]
+    tags: ["v*"]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    runs-on: macos-14
+    timeout-minutes: 75
+    env:
+      SF_TAG: sf_17.1
+      PY_SERIES: "3.13"
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Show toolchain
+        run: |
+          xcodebuild -version
+          swift --version
+
+      - name: Install XcodeGen
+        run: brew install xcodegen
+
+      - name: Cache Stockfish build
+        uses: actions/cache@v4
+        with:
+          path: |
+            build/lib
+            App/Resources/nets
+          key: stockfish-${{ env.SF_TAG }}-${{ hashFiles('scripts/build_stockfish.sh', 'bridge/**') }}
+
+      - name: Build Stockfish static library and fetch networks
+        run: bash scripts/build_stockfish.sh
+
+      - name: Fetch Python runtime (optional)
+        continue-on-error: true
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: bash scripts/fetch_python.sh
+
+      - name: Generate Xcode project
+        run: xcodegen generate
+
+      - name: Build app without code signing
+        run: |
+          set -o pipefail
+          xcodebuild \
+            -project ChessEngine.xcodeproj \
+            -scheme ChessEngine \
+            -configuration Release \
+            -sdk iphoneos \
+            -destination 'generic/platform=iOS' \
+            -derivedDataPath build/dd \
+            ARCHS=arm64 ONLY_ACTIVE_ARCH=NO \
+            CODE_SIGNING_ALLOWED=NO CODE_SIGNING_REQUIRED=NO CODE_SIGN_IDENTITY="" \
+            build | tee build/xcodebuild.log | tail -n 60
+
+      - name: Package unsigned IPA
+        run: |
+          bash scripts/package_ipa.sh \
+            build/dd/Build/Products/Release-iphoneos/ChessEngine.app \
+            build/ChessEngine-unsigned.ipa
+
+      - name: Upload IPA
+        uses: actions/upload-artifact@v4
+        with:
+          name: ChessEngine-unsigned-ipa
+          path: build/ChessEngine-unsigned.ipa
+          if-no-files-found: error
+
+      - name: Upload build log on failure
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: xcodebuild-log
+          path: build/xcodebuild.log
+          if-no-files-found: ignore
+
+      - name: Attach IPA to the release
+        if: startsWith(github.ref, 'refs/tags/v')
+        uses: softprops/action-gh-release@v2
+        with:
+          files: build/ChessEngine-unsigned.ipa
