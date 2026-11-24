@@ -48,3 +48,5 @@ targets:
         LIBRARY_SEARCH_PATHS: "$(SRCROOT)/build/lib"
         OTHER_LDFLAGS: "-lstockfish -lc++"
         ENABLE_BITCODE: NO
+        # The asset catalog has no app icon set yet; without this actool fails on "AppIcon".
+        ASSETCATALOG_COMPILER_APPICON_NAME: ""
