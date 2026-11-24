@@ -4,11 +4,12 @@
 
 ## Tính năng
 
-- **Chơi cờ**: hai người, chơi với Stockfish (8 mức độ, từ Beginner đến Maximum) hoặc với bot Python. Đủ luật: nhập thành, bắt tốt qua đường, phong cấp, chiếu hết, hòa cờ, lặp thế 3 lần, luật 50 nước.
-- **Lưu ván**: tự lưu khi ván kết thúc (hoặc bấm Save), lưu trong `Documents/Games` (xem được trong app Files). Nhập/xuất PGN (dán văn bản hoặc chọn file `.pgn`).
-- **Xem lại và phân tích**: Stockfish đánh giá từng thế cờ, phân loại nước đi giống chess.com: Brilliant `!!`, Great `!`, Best, Excellent, Good, Book, Inaccuracy `?!`, Mistake `?`, Blunder `??`, Forced. Có thanh đánh giá, biểu đồ đánh giá, mũi tên nước tốt nhất, độ chính xác (accuracy) từng bên và tên khai cuộc.
-- **Bot ngoài (.py)**: nhập file Python ở tab *Bots*. Xem phần dưới.
-- **Hồ sơ engine**: *Lite* (depth 12, 1 luồng, hash 16 MB) hoặc *Full* (depth 18, nhiều luồng, hash 64 MB) trong tab *Settings*.
+- **Chơi cờ**: hai người, chơi với Stockfish (8 mức độ, từ Mới học đến Tối đa) hoặc với bot Python. Đủ luật: nhập thành, bắt tốt qua đường, phong cấp, chiếu hết, hòa cờ, lặp thế 3 lần, luật 50 nước.
+- **Lưu ván**: tự lưu khi ván kết thúc (hoặc bấm Lưu), lưu trong `Documents/Games` (xem được trong app Tệp). Nhập/xuất PGN (dán văn bản hoặc chọn file `.pgn`).
+- **Xem lại và phân tích**: Stockfish đánh giá từng thế cờ, phân loại nước đi giống chess.com: Thiên tài, Tuyệt vời, Tốt nhất, Xuất sắc, Tốt, Khai cuộc, Thiếu chính xác, Sai lầm, Sai lầm nghiêm trọng, Bắt buộc. Biểu tượng phân loại hiện ở góc trên bên phải ô cờ của quân vừa đi. Nước thiên tài là nước hy sinh quân thực sự mà vẫn giữ được (hoặc cải thiện) thế cờ; với các nước hy sinh nghi ngờ, app tìm sâu thêm một lần trước khi kết luận. Có thanh đánh giá, biểu đồ đánh giá, mũi tên nước tốt nhất, độ chính xác từng bên và tên khai cuộc.
+- **Bot ngoài (.py)**: nhập file Python ở tab *Bot*. Xem phần dưới.
+- **Hồ sơ engine**: *Lite* (độ sâu 12, 1 luồng, hash 16 MB) hoặc *Full* (độ sâu 18, nhiều luồng, hash 64 MB) trong tab *Cài đặt*.
+- **Giao diện tiếng Việt** và bộ quân cờ, biểu tượng phân loại vẽ vector riêng (xem `scripts/gen_assets.py`; chạy lại script để tạo lại `App/Resources/Assets.xcassets`).
 
 ### Lưu ý về phiên bản Stockfish
 
@@ -32,7 +33,7 @@ Nhập file ở tab **Bots**, bấm **Test** để thử, rồi chọn *Python b
 
 ## Build file .ipa không ký bằng GitHub Actions
 
-Workflow: [`.github/workflows/build-ipa.yml`](.github/workflows/build-ipa.yml), chạy trên runner `macos-14`, kích hoạt khi push, pull request, tag `v*` hoặc chạy tay (*Actions → Build unsigned IPA → Run workflow*).
+Workflow: [`.github/workflows/build-ipa.yml`](.github/workflows/build-ipa.yml), chạy trên runner `macos-latest`, kích hoạt khi push, pull request, tag `v*` hoặc chạy tay (*Actions → Build unsigned IPA → Run workflow*).
 
 Các bước:
 

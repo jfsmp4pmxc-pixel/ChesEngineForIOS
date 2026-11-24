@@ -18,8 +18,8 @@ enum EngineProfile: String, CaseIterable, Codable, Identifiable {
 
     var detail: String {
         switch self {
-        case .lite: return "Depth 12, 1 thread, 16 MB hash. Fast and gentle on the battery."
-        case .full: return "Depth 18, several threads, 64 MB hash. Stronger, slower review."
+        case .lite: return "Độ sâu 12, 1 luồng, hash 16 MB. Nhanh và tiết kiệm pin."
+        case .full: return "Độ sâu 18, nhiều luồng, hash 64 MB. Mạnh hơn nhưng phân tích chậm hơn."
         }
     }
 
@@ -46,14 +46,14 @@ struct PlayLevel: Identifiable, Equatable {
     let movetimeMs: Int
 
     static let all: [PlayLevel] = [
-        PlayLevel(id: 0, name: "Beginner", strength: .skill(0), depth: 1, movetimeMs: 100),
-        PlayLevel(id: 1, name: "Casual (~1320)", strength: .elo(1320), depth: nil, movetimeMs: 300),
-        PlayLevel(id: 2, name: "Club (~1600)", strength: .elo(1600), depth: nil, movetimeMs: 500),
-        PlayLevel(id: 3, name: "Intermediate (~1900)", strength: .elo(1900), depth: nil, movetimeMs: 700),
-        PlayLevel(id: 4, name: "Advanced (~2200)", strength: .elo(2200), depth: nil, movetimeMs: 1000),
-        PlayLevel(id: 5, name: "Expert (~2500)", strength: .elo(2500), depth: nil, movetimeMs: 1200),
-        PlayLevel(id: 6, name: "Master (~2800)", strength: .elo(2800), depth: nil, movetimeMs: 1500),
-        PlayLevel(id: 7, name: "Maximum", strength: .full, depth: nil, movetimeMs: 2000)
+        PlayLevel(id: 0, name: "Mới học", strength: .skill(0), depth: 1, movetimeMs: 100),
+        PlayLevel(id: 1, name: "Giải trí (~1320)", strength: .elo(1320), depth: nil, movetimeMs: 300),
+        PlayLevel(id: 2, name: "Câu lạc bộ (~1600)", strength: .elo(1600), depth: nil, movetimeMs: 500),
+        PlayLevel(id: 3, name: "Trung cấp (~1900)", strength: .elo(1900), depth: nil, movetimeMs: 700),
+        PlayLevel(id: 4, name: "Nâng cao (~2200)", strength: .elo(2200), depth: nil, movetimeMs: 1000),
+        PlayLevel(id: 5, name: "Chuyên gia (~2500)", strength: .elo(2500), depth: nil, movetimeMs: 1200),
+        PlayLevel(id: 6, name: "Đại sư (~2800)", strength: .elo(2800), depth: nil, movetimeMs: 1500),
+        PlayLevel(id: 7, name: "Tối đa", strength: .full, depth: nil, movetimeMs: 2000)
     ]
 }
 
@@ -127,24 +127,24 @@ final class StockfishEngine {
         let netsDir = Bundle.main.bundlePath + "/nets"
         let nets = (try? FileManager.default.contentsOfDirectory(atPath: netsDir))?.filter { $0.hasSuffix(".nnue") } ?? []
         guard nets.count >= 2 else {
-            failure = "Stockfish network files (.nnue) are missing from the app bundle."
+            failure = "Thiếu các file mạng nơ-ron Stockfish (.nnue) trong ứng dụng."
             return false
         }
 
         let rc = sf_start(netsDir + "/stockfish")
         guard rc >= 0 else {
-            failure = "Could not start the Stockfish thread (code \(rc))."
+            failure = "Không khởi động được luồng Stockfish (mã \(rc))."
             return false
         }
 
         sf_send("uci")
         guard waitFor("uciok", seconds: 20) else {
-            failure = "Stockfish did not answer to the UCI handshake."
+            failure = "Stockfish không phản hồi bước bắt tay UCI."
             return false
         }
         sf_send("isready")
         guard waitFor("readyok", seconds: 60) else {
-            failure = "Stockfish did not become ready."
+            failure = "Stockfish chưa sẵn sàng."
             return false
         }
         started = true

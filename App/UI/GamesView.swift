@@ -26,8 +26,8 @@ struct GamesView: View {
                 if store.games.isEmpty {
                     VStack(spacing: 12) {
                         Image(systemName: "tray").font(.system(size: 44)).foregroundColor(.secondary)
-                        Text("No saved games yet").font(.headline)
-                        Text("Games you play are saved automatically. You can also import PGN files.")
+                        Text("Chưa có ván đấu nào được lưu").font(.headline)
+                        Text("Các ván bạn chơi sẽ được lưu tự động. Bạn cũng có thể nhập file PGN.")
                             .font(.footnote)
                             .foregroundColor(.secondary)
                             .multilineTextAlignment(.center)
@@ -45,12 +45,12 @@ struct GamesView: View {
                     .listStyle(.insetGrouped)
                 }
             }
-            .navigationTitle("Games")
+            .navigationTitle("Ván đấu")
             .toolbar {
                 ToolbarItem(placement: .navigationBarTrailing) {
                     Menu {
-                        Button { showPaste = true } label: { Label("Paste PGN", systemImage: "doc.on.clipboard") }
-                        Button { showImporter = true } label: { Label("Import PGN file", systemImage: "square.and.arrow.down") }
+                        Button { showPaste = true } label: { Label("Dán PGN", systemImage: "doc.on.clipboard") }
+                        Button { showImporter = true } label: { Label("Nhập file PGN", systemImage: "square.and.arrow.down") }
                     } label: {
                         Image(systemName: "plus")
                     }
@@ -59,7 +59,7 @@ struct GamesView: View {
             .sheet(isPresented: $showPaste) {
                 PastePGNSheet(isPresented: $showPaste) { text in
                     let n = store.importPGN(text)
-                    info = n == 0 ? "No valid game found in that text." : "Imported \(n) game(s)."
+                    info = n == 0 ? "Không tìm thấy ván cờ hợp lệ trong văn bản này." : "Đã nhập \(n) ván cờ."
                 }
             }
             .fileImporter(isPresented: $showImporter, allowedContentTypes: pgnTypes, allowsMultipleSelection: true) { result in
@@ -73,7 +73,7 @@ struct GamesView: View {
                         total += store.importPGN(text)
                     }
                 }
-                info = total == 0 ? "No valid game found in the selected file." : "Imported \(total) game(s)."
+                info = total == 0 ? "Không tìm thấy ván cờ hợp lệ trong file đã chọn." : "Đã nhập \(total) ván cờ."
             }
             .alert(info ?? "", isPresented: Binding(get: { info != nil }, set: { if !$0 { info = nil } })) {
                 Button("OK", role: .cancel) {}
@@ -91,7 +91,7 @@ struct GamesView: View {
             }
             HStack(spacing: 8) {
                 Text(GamesView.dateFormatter.string(from: g.date))
-                Text("· \((g.moves.count + 1) / 2) moves")
+                Text("· \((g.moves.count + 1) / 2) nước")
                 if let r = g.review {
                     Text("· \(Int(r.whiteAccuracy.rounded()))% / \(Int(r.blackAccuracy.rounded()))%")
                     Image(systemName: "checkmark.seal.fill").foregroundColor(.green)
@@ -112,7 +112,7 @@ private struct PastePGNSheet: View {
     var body: some View {
         NavigationView {
             VStack(alignment: .leading, spacing: 8) {
-                Text("Paste one or more games in PGN format.")
+                Text("Dán một hoặc nhiều ván cờ theo định dạng PGN.")
                     .font(.footnote)
                     .foregroundColor(.secondary)
                 TextEditor(text: $text)
@@ -120,14 +120,14 @@ private struct PastePGNSheet: View {
                     .overlay(RoundedRectangle(cornerRadius: 8).stroke(Color.gray.opacity(0.4)))
             }
             .padding()
-            .navigationTitle("Paste PGN")
+            .navigationTitle("Dán PGN")
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
                 ToolbarItem(placement: .navigationBarLeading) {
-                    Button("Cancel") { isPresented = false }
+                    Button("Hủy") { isPresented = false }
                 }
                 ToolbarItem(placement: .navigationBarTrailing) {
-                    Button("Import") {
+                    Button("Nhập") {
                         onImport(text)
                         isPresented = false
                     }

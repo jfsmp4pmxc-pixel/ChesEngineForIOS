@@ -42,6 +42,8 @@ struct BoardView: View {
     var selected: Int? = nil
     var legalTargets: Set<Int> = []
     var arrow: (from: Int, to: Int)? = nil
+    /// Quality of the last move; drawn in the top-right corner of its destination square.
+    var badge: MoveClass? = nil
     var onTap: ((Int) -> Void)? = nil
 
     private let lightColor = Color(red: 0.93, green: 0.93, blue: 0.82)
@@ -56,17 +58,20 @@ struct BoardView: View {
             let size = min(geo.size.width, geo.size.height)
             let cell = size / 8
             ZStack(alignment: .topLeading) {
-                ForEach(0..<64, id: \.self) { idx in
-                    let row = idx / 8
-                    let col = idx % 8
-                    let file = flipped ? 7 - col : col
-                    let rank = flipped ? row : 7 - row
-                    let sq = rank * 8 + file
-                    squareView(sq: sq, row: row, col: col, cell: cell)
-                        .frame(width: cell, height: cell)
-                        .position(x: (CGFloat(col) + 0.5) * cell, y: (CGFloat(row) + 0.5) * cell)
-                        .contentShape(Rectangle())
-                        .onTapGesture { onTap?(sq) }
+                // The squares are laid out with stacks (not `.position`), so every
+                // square gets its own tap area.
+                VStack(spacing: 0) {
+                    ForEach(0..<8, id: \.self) { row in
+                        HStack(spacing: 0) {
+                            ForEach(0..<8, id: \.self) { col in
+                                let sq = square(row: row, col: col)
+                                squareView(sq: sq, row: row, col: col, cell: cell)
+                                    .frame(width: cell, height: cell)
+                                    .contentShape(Rectangle())
+                                    .onTapGesture { onTap?(sq) }
+                            }
+                        }
+                    }
                 }
                 if let a = arrow {
                     ArrowShape(from: center(of: a.from, cell: cell),
@@ -75,10 +80,27 @@ struct BoardView: View {
                         .fill(Color.orange.opacity(0.8))
                         .allowsHitTesting(false)
                 }
+                if let b = badge, let lm = lastMove {
+                    let d = cell * 0.46
+                    let c = center(of: lm.to, cell: cell)
+                    let x = min(max(c.x + cell / 2 - d * 0.40, d / 2), size - d / 2)
+                    let y = min(max(c.y - cell / 2 + d * 0.40, d / 2), size - d / 2)
+                    ClassIcon(cls: b)
+                        .frame(width: d, height: d)
+                        .position(x: x, y: y)
+                        .allowsHitTesting(false)
+                }
             }
             .frame(width: size, height: size)
         }
         .aspectRatio(1, contentMode: .fit)
+    }
+
+    /// Square index for a screen row / column (row 0 is the top of the board).
+    private func square(row: Int, col: Int) -> Int {
+        let file = flipped ? 7 - col : col
+        let rank = flipped ? row : 7 - row
+        return rank * 8 + file
     }
 
     private func center(of sq: Int, cell: CGFloat) -> CGPoint {
@@ -106,11 +128,7 @@ struct BoardView: View {
             }
 
             if let p = position.board[sq] {
-                Text(p.glyph)
-                    .font(.system(size: cell * 0.8))
-                    .foregroundColor(p.side == .white ? .white : .black)
-                    .shadow(color: Color.black.opacity(p.side == .white ? 0.9 : 0.0), radius: 0.8)
-                    .shadow(color: Color.black.opacity(p.side == .white ? 0.5 : 0.0), radius: 1.5)
+                PieceImage(piece: p, size: cell)
             }
 
             if legalTargets.contains(sq) {

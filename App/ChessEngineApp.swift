@@ -18,13 +18,13 @@ struct ContentView: View {
     var body: some View {
         TabView {
             PlayView()
-                .tabItem { Label("Play", systemImage: "gamecontroller") }
+                .tabItem { Label("Chơi cờ", systemImage: "gamecontroller") }
             GamesView()
-                .tabItem { Label("Games", systemImage: "clock.arrow.circlepath") }
+                .tabItem { Label("Ván đấu", systemImage: "clock.arrow.circlepath") }
             BotsView()
-                .tabItem { Label("Bots", systemImage: "terminal") }
+                .tabItem { Label("Bot", systemImage: "terminal") }
             SettingsView()
-                .tabItem { Label("Settings", systemImage: "gearshape") }
+                .tabItem { Label("Cài đặt", systemImage: "gearshape") }
         }
     }
 }

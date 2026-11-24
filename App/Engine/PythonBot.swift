@@ -10,10 +10,10 @@ enum PythonBotError: LocalizedError {
 
     var errorDescription: String? {
         switch self {
-        case .unavailable(let s): return "Python is not available: \(s)"
-        case .failed(let s): return "Bot error:\n\(s)"
-        case .timeout: return "The bot took too long to answer."
-        case .illegalMove(let m): return "The bot returned an illegal move: \(m)"
+        case .unavailable(let s): return "Python không khả dụng: \(s)"
+        case .failed(let s): return "Lỗi bot:\n\(s)"
+        case .timeout: return "Bot trả lời quá lâu."
+        case .illegalMove(let m): return "Bot trả về nước đi không hợp lệ: \(m)"
         }
     }
 }
@@ -69,10 +69,10 @@ final class PythonRuntime {
     var unavailableReason: String? {
         if let f = failure { return f }
         if !FileManager.default.fileExists(atPath: frameworkBinary) {
-            return "this build was made without the Python runtime."
+            return "bản dựng này không kèm môi trường Python."
         }
         if !FileManager.default.fileExists(atPath: pythonHome + "/lib") {
-            return "the Python standard library is missing from the app."
+            return "thiếu thư viện chuẩn Python trong ứng dụng."
         }
         return nil
     }
@@ -103,7 +103,7 @@ def _catnip_call(req_path):
         mod = entry[1]
         fn = getattr(mod, "get_move", None) or getattr(mod, "choose_move", None)
         if fn is None:
-            raise RuntimeError("The bot must define get_move(fen) and return a move such as 'e2e4'.")
+            raise RuntimeError("Bot phải định nghĩa hàm get_move(fen) và trả về nước đi như 'e2e4'.")
         move = fn(fen)
         out = {"move": "" if move is None else str(move).strip()}
     except BaseException:
@@ -123,7 +123,7 @@ def _catnip_call(req_path):
         let libDir = pythonHome + "/lib"
         guard let version = (try? FileManager.default.contentsOfDirectory(atPath: libDir))?
             .first(where: { $0.hasPrefix("python3") }) else {
-            failure = "no python3.x folder inside the bundled library."
+            failure = "không có thư mục python3.x trong thư viện đi kèm."
             return false
         }
         let stdlib = libDir + "/" + version
@@ -134,7 +134,7 @@ def _catnip_call(req_path):
         setenv("PYTHONNOUSERSITE", "1", 1)
 
         guard let handle = dlopen(frameworkBinary, RTLD_NOW | RTLD_GLOBAL) else {
-            failure = dlerror().map { String(cString: $0) } ?? "dlopen failed."
+            failure = dlerror().map { String(cString: $0) } ?? "dlopen thất bại."
             return false
         }
 
@@ -148,7 +148,7 @@ def _catnip_call(req_path):
               let gilEnsure = symbol("PyGILState_Ensure", as: EnsureFn.self),
               let gilRelease = symbol("PyGILState_Release", as: ReleaseFn.self),
               let saveThread = symbol("PyEval_SaveThread", as: SaveFn.self) else {
-            failure = "Python.framework is missing expected symbols."
+            failure = "Python.framework thiếu các ký hiệu cần thiết."
             return false
         }
 
@@ -157,7 +157,7 @@ def _catnip_call(req_path):
         // Release the GIL taken by initialisation so any thread can use PyGILState_Ensure.
         _ = saveThread()
         guard rc == 0 else {
-            failure = "the bot helper could not be loaded."
+            failure = "không nạp được phần hỗ trợ chạy bot."
             return false
         }
 
@@ -185,7 +185,7 @@ def _catnip_call(req_path):
 
     private func runSync(botPath: String, fen: String) -> Result<String, PythonBotError> {
         guard bootstrap(), let run = run, let ensure = ensure, let release = release else {
-            return .failure(.unavailable(failure ?? "unknown reason."))
+            return .failure(.unavailable(failure ?? "không rõ lý do."))
         }
 
         let reqPath = NSTemporaryDirectory() + "catnip-req-\(UUID().uuidString).json"
@@ -197,7 +197,7 @@ def _catnip_call(req_path):
 
         let request: [String: String] = ["path": botPath, "fen": fen]
         guard let data = try? JSONSerialization.data(withJSONObject: request) else {
-            return .failure(.failed("Could not encode the request."))
+            return .failure(.failed("Không mã hóa được yêu cầu."))
         }
         do {
             try data.write(to: URL(fileURLWithPath: reqPath))
@@ -212,11 +212,11 @@ def _catnip_call(req_path):
 
         guard let outData = FileManager.default.contents(atPath: outPath),
               let obj = try? JSONSerialization.jsonObject(with: outData) as? [String: Any] else {
-            return .failure(.failed("The bot produced no answer."))
+            return .failure(.failed("Bot không trả lời."))
         }
         if let err = obj["error"] as? String { return .failure(.failed(err)) }
         let move = (obj["move"] as? String) ?? ""
-        if move.isEmpty { return .failure(.failed("The bot returned an empty move.")) }
+        if move.isEmpty { return .failure(.failed("Bot trả về nước đi rỗng.")) }
         return .success(move)
     }
 }

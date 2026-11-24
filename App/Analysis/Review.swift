@@ -50,27 +50,47 @@ enum MoveClass: String, Codable, CaseIterable {
 
     var label: String {
         switch self {
-        case .brilliant: return "Brilliant"
-        case .great: return "Great"
-        case .best: return "Best"
-        case .excellent: return "Excellent"
-        case .good: return "Good"
-        case .book: return "Book"
-        case .inaccuracy: return "Inaccuracy"
-        case .mistake: return "Mistake"
-        case .blunder: return "Blunder"
-        case .forced: return "Forced"
+        case .brilliant: return "Thiên tài"
+        case .great: return "Tuyệt vời"
+        case .best: return "Tốt nhất"
+        case .excellent: return "Xuất sắc"
+        case .good: return "Tốt"
+        case .book: return "Khai cuộc"
+        case .inaccuracy: return "Thiếu chính xác"
+        case .mistake: return "Sai lầm"
+        case .blunder: return "Sai lầm nghiêm trọng"
+        case .forced: return "Bắt buộc"
         }
     }
 
+    /// Completes the sentence "<move> ..." in the review header.
+    var phrase: String {
+        switch self {
+        case .brilliant: return "là nước đi thiên tài"
+        case .great: return "là nước đi tuyệt vời"
+        case .best: return "là nước đi tốt nhất"
+        case .excellent: return "là nước đi xuất sắc"
+        case .good: return "là nước đi tốt"
+        case .book: return "là nước khai cuộc"
+        case .inaccuracy: return "là nước đi thiếu chính xác"
+        case .mistake: return "là một sai lầm"
+        case .blunder: return "là sai lầm nghiêm trọng"
+        case .forced: return "là nước đi bắt buộc"
+        }
+    }
+
+    /// Name of the badge image in the asset catalog.
+    var iconName: String { return "class_" + rawValue }
+
+    /// Text drawn only if the badge image is missing.
     var symbol: String {
         switch self {
         case .brilliant: return "!!"
         case .great: return "!"
         case .best: return "★"
-        case .excellent: return "✓"
-        case .good: return "•"
-        case .book: return "📖"
+        case .excellent: return "+"
+        case .good: return "✓"
+        case .book: return "B"
         case .inaccuracy: return "?!"
         case .mistake: return "?"
         case .blunder: return "??"
@@ -197,7 +217,7 @@ enum ReviewAnalyzer {
         let replay = record.replay()
         let positions = replay.positions
         let moves = replay.moves
-        guard !moves.isEmpty else { throw AnalysisError(message: "This game has no moves to review.") }
+        guard !moves.isEmpty else { throw AnalysisError(message: "Ván cờ này chưa có nước đi nào để phân tích.") }
 
         // 1. Evaluate every position once.
         var evals: [PositionEval] = []
@@ -220,7 +240,7 @@ enum ReviewAnalyzer {
                 try Task.checkCancellation()
                 guard let r = result, let top = r.lines.first else {
                     throw AnalysisError(message: StockfishEngine.shared.startupError
-                                        ?? "Stockfish did not return an evaluation.")
+                                        ?? "Stockfish không trả về đánh giá nào.")
                 }
                 let e = Eval.fromWhitePOV(line: top, turn: pos.turn)
                 let s = r.lines.count > 1 ? Eval.fromWhitePOV(line: r.lines[1], turn: pos.turn) : nil
@@ -263,14 +283,31 @@ enum ReviewAnalyzer {
                 else if ep <= 0.20 { cls = .mistake }
                 else { cls = .blunder }
 
-                if cls == .best || cls == .excellent {
-                    if isBrilliant(pos: pos, move: move, loss: loss, winBefore: winBefore, winAfter: winAfter) {
-                        cls = .brilliant
-                    } else if playedBest, let second = before.second,
-                              isGreat(pos: pos, move: move, previous: i > 0 ? moves[i - 1] : nil,
-                                      winBefore: winBefore, secondWin: second.winPercent(for: mover)) {
-                        cls = .great
+                // A sacrifice that works is brilliant. The quick search may not see the point
+                // of a sacrifice yet, so a promising one gets a second, deeper look.
+                if loss <= 8, winBefore < 92, move.promotion == nil,
+                   sacrificeValue(pos: pos, move: move) >= 2 {
+                    var checkedLoss = loss
+                    var checkedAfter = winAfter
+                    if loss > 2 || winAfter < 45, positions[i + 1].status() == .ongoing {
+                        let deeper = await deeperWinPercent(after: positions[i + 1],
+                                                            for: mover,
+                                                            profile: profile)
+                        try Task.checkCancellation()
+                        if let d = deeper {
+                            checkedAfter = d
+                            checkedLoss = max(0, winBefore - d)
+                        }
                     }
+                    if checkedLoss <= 2, checkedAfter >= 45 {
+                        cls = .brilliant
+                    }
+                }
+
+                if cls == .best, playedBest, let second = before.second,
+                   isGreat(pos: pos, move: move, previous: i > 0 ? moves[i - 1] : nil,
+                           winBefore: winBefore, secondWin: second.winPercent(for: mover)) {
+                    cls = .great
                 }
             }
 
@@ -310,15 +347,43 @@ enum ReviewAnalyzer {
 
     // MARK: Heuristics
 
-    /// A good move that gives up material (a real sacrifice) without worsening the position.
-    private static func isBrilliant(pos: Position, move: Move, loss: Double,
-                                    winBefore: Double, winAfter: Double) -> Bool {
-        guard loss <= 2, move.promotion == nil, winAfter >= 45, winBefore < 92 else { return false }
-        guard let piece = pos.board[move.from], piece.type != .pawn, piece.type != .king else { return false }
+    /// How much material (in pawns) the move newly leaves to be won, minus what the move
+    /// itself captures. Any of the mover's pieces worth a minor piece or more counts, not
+    /// only the one that moved, and the opponent must have a legal capture of it. Pieces
+    /// that were already attacked before the move do not count as sacrificed.
+    private static func sacrificeValue(pos: Position, move: Move) -> Int {
+        guard let moving = pos.board[move.from] else { return 0 }
+        let mover = moving.side
+        let opponent = mover.opposite
         let captured = pos.board[move.to]?.type.value ?? 0
         let next = pos.make(move)
-        let lost = next.see(on: move.to, by: next.turn)
-        return lost - captured >= 2
+        let replies = next.legalMoves()
+        var risk = 0
+        for sq in 0..<64 {
+            guard let p = next.board[sq], p.side == mover, p.type != .king, p.type != .pawn else { continue }
+            guard replies.contains(where: { $0.to == sq }) else { continue }
+            let origin = sq == move.to ? move.from : sq
+            let already = pos.board[origin] != nil ? pos.see(on: origin, by: opponent) : 0
+            let now = next.see(on: sq, by: opponent)
+            risk = max(risk, now - already)
+        }
+        return risk - captured
+    }
+
+    /// Second look at the position after a move with a deeper search. Returns the win
+    /// probability of `mover`, or nil if the engine gave no answer.
+    private static func deeperWinPercent(after pos: Position,
+                                         for mover: Side,
+                                         profile: EngineProfile) async -> Double? {
+        let result = await StockfishEngine.shared.search(
+            fen: pos.fen,
+            depth: profile.analysisDepth + 6,
+            movetimeMs: profile.analysisMaxMillis * 2,
+            multiPV: 1,
+            strength: .full,
+            profile: profile)
+        guard let top = result?.lines.first else { return nil }
+        return Eval.fromWhitePOV(line: top, turn: pos.turn).winPercent(for: mover)
     }
 
     /// The only move that keeps the position, when the alternative is clearly worse.

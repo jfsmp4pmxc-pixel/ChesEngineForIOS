@@ -1,0 +1,15 @@
+{
+  "images": [
+    {
+      "filename": "class_best.svg",
+      "idiom": "universal"
+    }
+  ],
+  "info": {
+    "author": "xcode",
+    "version": 1
+  },
+  "properties": {
+    "preserves-vector-representation": true
+  }
+}

@@ -18,22 +18,22 @@ struct BotsView: View {
     var body: some View {
         NavigationView {
             List {
-                Section(header: Text("Python runtime")) {
+                Section(header: Text("Môi trường Python")) {
                     if let reason = pythonStatus {
-                        Label("Not available: \(reason)", systemImage: "exclamationmark.triangle.fill")
+                        Label("Không khả dụng: \(reason)", systemImage: "exclamationmark.triangle.fill")
                             .foregroundColor(.orange)
                             .font(.footnote)
                     } else {
-                        Label("Embedded Python is ready", systemImage: "checkmark.circle.fill")
+                        Label("Python tích hợp đã sẵn sàng", systemImage: "checkmark.circle.fill")
                             .foregroundColor(.green)
                             .font(.footnote)
                     }
                 }
 
-                Section(header: Text("Your bots"),
-                        footer: Text("Bots are stored in the app's Bots folder, which is also visible in the Files app.")) {
+                Section(header: Text("Bot của bạn"),
+                        footer: Text("Bot được lưu trong thư mục Bots của ứng dụng, bạn cũng thấy được trong app Tệp (Files).")) {
                     if bots.bots.isEmpty {
-                        Text("No bots yet").foregroundColor(.secondary)
+                        Text("Chưa có bot nào").foregroundColor(.secondary)
                     }
                     ForEach(bots.bots) { bot in
                         HStack {
@@ -45,7 +45,7 @@ struct BotsView: View {
                             if testing == bot.id {
                                 ProgressView()
                             } else {
-                                Button("Test") { test(bot) }
+                                Button("Thử") { test(bot) }
                                     .buttonStyle(.bordered)
                             }
                         }
@@ -55,25 +55,25 @@ struct BotsView: View {
                     }
                 }
 
-                Section(header: Text("How to write a bot")) {
+                Section(header: Text("Cách viết bot")) {
                     Text("""
-                    Define a function get_move(fen) in a .py file. It receives the position \
-                    as a FEN string and returns a move in UCI ("e2e4", "e7e8q") or SAN ("Nf3") notation.
+                    Viết hàm get_move(fen) trong một file .py. Hàm nhận thế cờ dạng chuỗi FEN \
+                    và trả về nước đi theo ký hiệu UCI ("e2e4", "e7e8q") hoặc SAN ("Nf3").
 
-                    Only the Python standard library is available.
+                    Chỉ dùng được thư viện chuẩn của Python.
                     """)
                     .font(.footnote)
                     Text("""
                     import random
 
                     def get_move(fen):
-                        # Replace with your own logic
+                        # Thay bằng logic của bạn
                         return "e2e4"
                     """)
                     .font(.system(.footnote, design: .monospaced))
                 }
             }
-            .navigationTitle("Bots")
+            .navigationTitle("Bot")
             .toolbar {
                 ToolbarItem(placement: .navigationBarTrailing) {
                     Button { showImporter = true } label: { Image(systemName: "plus") }
@@ -105,9 +105,9 @@ struct BotsView: View {
             switch res {
             case .success(let text):
                 if Position.start.move(fromUCI: text) ?? Position.start.move(fromSAN: text) != nil {
-                    message = "\(bot.name) answered \"\(text)\" from the start position. It works."
+                    message = "\(bot.name) trả lời \"\(text)\" ở thế cờ ban đầu. Bot hoạt động tốt."
                 } else {
-                    message = "\(bot.name) answered \"\(text)\", which is not a legal move from the start position."
+                    message = "\(bot.name) trả lời \"\(text)\", đây không phải nước đi hợp lệ ở thế cờ ban đầu."
                 }
             case .failure(let err):
                 message = err.localizedDescription

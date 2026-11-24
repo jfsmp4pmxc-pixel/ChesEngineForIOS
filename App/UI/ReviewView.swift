@@ -97,7 +97,8 @@ struct ReviewView: View {
                 BoardView(position: vm.position,
                           flipped: vm.flipped,
                           lastMove: vm.lastMove,
-                          arrow: vm.bestArrow)
+                          arrow: vm.bestArrow,
+                          badge: vm.currentReview?.classification)
                     .padding(.horizontal, 8)
 
                 moveInfo
@@ -115,7 +116,7 @@ struct ReviewView: View {
             }
             .padding(.vertical, 8)
         }
-        .navigationTitle("Review")
+        .navigationTitle("Xem lại")
         .navigationBarTitleDisplayMode(.inline)
         .toolbar {
             ToolbarItem(placement: .navigationBarTrailing) {
@@ -127,7 +128,7 @@ struct ReviewView: View {
                 }
             }
         }
-        .alert("PGN copied to the clipboard", isPresented: $copied) {
+        .alert("Đã chép PGN vào bộ nhớ tạm", isPresented: $copied) {
             Button("OK", role: .cancel) {}
         }
         .onDisappear { vm.cancel() }
@@ -140,7 +141,7 @@ struct ReviewView: View {
             Text("\(vm.record.white) vs \(vm.record.black)").font(.headline)
             HStack(spacing: 6) {
                 Text(vm.record.result).monospacedDigit()
-                if !vm.record.termination.isEmpty { Text("· \(vm.record.termination)") }
+                if !vm.record.termination.isEmpty { Text("· \(Vi.termination(vm.record.termination))") }
             }
             .font(.subheadline)
             .foregroundColor(.secondary)
@@ -155,14 +156,9 @@ struct ReviewView: View {
         if let r = vm.currentReview {
             VStack(spacing: 2) {
                 HStack(spacing: 6) {
-                    Text(r.classification.symbol)
-                        .font(.headline)
-                        .foregroundColor(.white)
-                        .padding(.horizontal, 8)
-                        .padding(.vertical, 2)
-                        .background(r.classification.color)
-                        .clipShape(Capsule())
-                    Text("\(r.san) is \(r.classification.label.lowercased())")
+                    ClassIcon(cls: r.classification)
+                        .frame(width: 26, height: 26)
+                    Text("\(r.san) \(r.classification.phrase)")
                         .font(.headline)
                     if let review = vm.record.review, vm.index < review.evals.count {
                         Text(review.evals[vm.index].display)
@@ -172,13 +168,13 @@ struct ReviewView: View {
                 }
                 if let best = r.bestSAN, r.bestUCI != r.uci,
                    [.good, .excellent, .inaccuracy, .mistake, .blunder].contains(r.classification) {
-                    Text("Best was \(best)").font(.footnote).foregroundColor(.secondary)
+                    Text("Nước tốt nhất là \(best)").font(.footnote).foregroundColor(.secondary)
                 }
             }
         } else if vm.index > 0 {
             Text(vm.sans[vm.index - 1]).font(.headline)
         } else {
-            Text("Start position").font(.headline).foregroundColor(.secondary)
+            Text("Thế cờ ban đầu").font(.headline).foregroundColor(.secondary)
         }
     }
 
@@ -196,9 +192,9 @@ struct ReviewView: View {
     private func summary(_ review: GameReview) -> some View {
         VStack(spacing: 8) {
             HStack {
-                accuracyBox(title: "White", value: review.whiteAccuracy)
+                accuracyBox(title: "Trắng", value: review.whiteAccuracy)
                 Spacer()
-                accuracyBox(title: "Black", value: review.blackAccuracy)
+                accuracyBox(title: "Đen", value: review.blackAccuracy)
             }
             ForEach(MoveClass.summaryOrder, id: \.self) { cls in
                 let w = review.whiteCounts[cls.rawValue] ?? 0
@@ -208,13 +204,8 @@ struct ReviewView: View {
                         Text("\(w)").frame(width: 36, alignment: .leading)
                         Spacer()
                         HStack(spacing: 6) {
-                            Text(cls.symbol)
-                                .font(.caption.weight(.bold))
-                                .foregroundColor(.white)
-                                .padding(.horizontal, 6)
-                                .padding(.vertical, 1)
-                                .background(cls.color)
-                                .clipShape(Capsule())
+                            ClassIcon(cls: cls)
+                                .frame(width: 20, height: 20)
                             Text(cls.label).font(.subheadline)
                         }
                         Spacer()
@@ -222,7 +213,7 @@ struct ReviewView: View {
                     }
                 }
             }
-            Text("\(review.engine) · depth \(review.depth)")
+            Text("\(review.engine) · độ sâu \(review.depth)")
                 .font(.caption)
                 .foregroundColor(.secondary)
         }
@@ -237,7 +228,7 @@ struct ReviewView: View {
             Text(title).font(.caption).foregroundColor(.secondary)
             Text(String(format: "%.1f", value))
                 .font(.title2.weight(.bold).monospacedDigit())
-            Text("accuracy").font(.caption2).foregroundColor(.secondary)
+            Text("độ chính xác").font(.caption2).foregroundColor(.secondary)
         }
         .frame(width: 110)
         .padding(.vertical, 6)
@@ -251,22 +242,22 @@ struct ReviewView: View {
             if vm.analyzing {
                 ProgressView(value: vm.progress)
                     .padding(.horizontal, 24)
-                Text("Analysing with Stockfish (\(profile.title))… \(Int(vm.progress * 100))%")
+                Text("Đang phân tích bằng Stockfish (\(profile.title))… \(Int(vm.progress * 100))%")
                     .font(.footnote)
                     .foregroundColor(.secondary)
-                Button("Cancel", role: .cancel) { vm.cancel() }
+                Button("Hủy", role: .cancel) { vm.cancel() }
             } else {
                 Button {
                     vm.analyze(profile: profile, store: store)
                 } label: {
-                    Label(vm.record.review == nil ? "Analyse game" : "Analyse again",
+                    Label(vm.record.review == nil ? "Phân tích ván cờ" : "Phân tích lại",
                           systemImage: "waveform.path.ecg")
                         .frame(maxWidth: .infinity)
                 }
                 .buttonStyle(.borderedProminent)
                 .padding(.horizontal, 24)
                 .disabled(vm.moves.isEmpty)
-                Text("Engine profile: \(profile.title). Change it in Settings.")
+                Text("Cấu hình engine: \(profile.title). Đổi trong tab Cài đặt.")
                     .font(.caption)
                     .foregroundColor(.secondary)
             }
@@ -304,7 +295,7 @@ struct ReviewView: View {
         } label: {
             HStack(spacing: 4) {
                 if let c = cls {
-                    Circle().fill(c.color).frame(width: 8, height: 8)
+                    ClassIcon(cls: c).frame(width: 14, height: 14)
                 }
                 Text(vm.sans[ply])
                     .font(.system(.callout, design: .monospaced))

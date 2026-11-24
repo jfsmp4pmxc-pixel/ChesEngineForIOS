@@ -137,7 +137,7 @@ final class BotStore: ObservableObject {
         defer { if scoped { url.stopAccessingSecurityScopedResource() } }
 
         guard url.pathExtension.lowercased() == "py" else {
-            throw AnalysisError(message: "Please choose a .py file.")
+            throw AnalysisError(message: "Hãy chọn một file .py.")
         }
         let dest = Paths.bots.appendingPathComponent(url.lastPathComponent)
         if FileManager.default.fileExists(atPath: dest.path) {

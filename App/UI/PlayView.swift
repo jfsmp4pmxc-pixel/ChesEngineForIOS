@@ -1,17 +1,17 @@
 import SwiftUI
 
 enum OpponentKind: String, CaseIterable, Identifiable {
-    case human = "Two players"
+    case human = "Hai người"
     case stockfish = "Stockfish"
-    case python = "Python bot"
+    case python = "Bot Python"
 
     var id: String { rawValue }
 }
 
 enum ColorChoice: String, CaseIterable, Identifiable {
-    case white = "White"
-    case black = "Black"
-    case random = "Random"
+    case white = "Trắng"
+    case black = "Đen"
+    case random = "Ngẫu nhiên"
 
     var id: String { rawValue }
 }
@@ -56,22 +56,22 @@ final class PlayViewModel: ObservableObject {
 
     var opponentName: String {
         switch opponent {
-        case .human: return "Player 2"
+        case .human: return "Người chơi 2"
         case .stockfish: return "Stockfish 17.1 · \(level.name)"
-        case .python: return activeBot?.name ?? "Python bot"
+        case .python: return activeBot?.name ?? "Bot Python"
         }
     }
 
-    var whiteName: String { humanSide == .white || opponent == .human ? "You" : opponentName }
-    var blackName: String { humanSide == .black || opponent == .human ? (opponent == .human ? "Player 2" : "You") : opponentName }
+    var whiteName: String { humanSide == .white || opponent == .human ? "Bạn" : opponentName }
+    var blackName: String { humanSide == .black || opponent == .human ? (opponent == .human ? "Người chơi 2" : "Bạn") : opponentName }
 
     var statusText: String {
         if session.isOver {
-            return "\(session.termination) · \(session.result)"
+            return "\(Vi.termination(session.termination)) · \(session.result)"
         }
-        if thinking { return "\(opponentName) is thinking…" }
-        let side = session.position.turn == .white ? "White" : "Black"
-        return session.position.inCheck ? "\(side) to move · Check" : "\(side) to move"
+        if thinking { return "\(opponentName) đang suy nghĩ…" }
+        let side = session.position.turn == .white ? "Trắng" : "Đen"
+        return session.position.inCheck ? "\(side) đi · Chiếu" : "\(side) đi"
     }
 
     // MARK: Game flow
@@ -97,7 +97,7 @@ final class PlayViewModel: ObservableObject {
         if opponent == .python {
             activeBot = bots.first(where: { $0.filename == botFilename }) ?? bots.first
             if activeBot == nil {
-                message = "Import a Python bot in the Bots tab first. Playing against yourself for now."
+                message = "Hãy nhập một bot Python ở tab Bot trước. Tạm thời bạn chơi với chính mình."
                 opponent = .human
             }
         }
@@ -184,7 +184,7 @@ final class PlayViewModel: ObservableObject {
 
     func saveNow() {
         persist()
-        message = "Game saved."
+        message = "Đã lưu ván cờ."
     }
 
     private func persist() {
@@ -225,7 +225,7 @@ final class PlayViewModel: ObservableObject {
                 if let r = r {
                     if let uci = r.bestMove { chosen = pos.move(fromUCI: uci) }
                 } else {
-                    problem = StockfishEngine.shared.startupError ?? "Stockfish failed to answer."
+                    problem = StockfishEngine.shared.startupError ?? "Stockfish không phản hồi."
                 }
             case .python:
                 if let bot = bot {
@@ -248,7 +248,7 @@ final class PlayViewModel: ObservableObject {
                 session.play(m)
                 afterMove()
             } else {
-                message = problem ?? "The opponent could not find a move."
+                message = problem ?? "Đối thủ không tìm được nước đi."
             }
         }
     }
@@ -296,29 +296,29 @@ struct PlayView: View {
                 }
                 .padding(.vertical, 8)
             }
-            .navigationTitle("Play")
+            .navigationTitle("Chơi cờ")
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
                 ToolbarItem(placement: .navigationBarTrailing) {
-                    Button("New game") { showSetup = true }
+                    Button("Ván mới") { showSetup = true }
                 }
             }
             .sheet(isPresented: $showSetup) {
                 SetupSheet(vm: vm, isPresented: $showSetup)
                     .environmentObject(bots)
             }
-            .confirmationDialog("Promote to", isPresented: Binding(
+            .confirmationDialog("Phong cấp thành", isPresented: Binding(
                 get: { vm.pendingPromotion != nil },
                 set: { if !$0 { vm.pendingPromotion = nil } })) {
-                Button("Queen") { vm.choosePromotion(.queen) }
-                Button("Rook") { vm.choosePromotion(.rook) }
-                Button("Bishop") { vm.choosePromotion(.bishop) }
-                Button("Knight") { vm.choosePromotion(.knight) }
-                Button("Cancel", role: .cancel) { vm.pendingPromotion = nil }
+                Button("Hậu") { vm.choosePromotion(.queen) }
+                Button("Xe") { vm.choosePromotion(.rook) }
+                Button("Tượng") { vm.choosePromotion(.bishop) }
+                Button("Mã") { vm.choosePromotion(.knight) }
+                Button("Hủy", role: .cancel) { vm.pendingPromotion = nil }
             }
-            .alert("Resign this game?", isPresented: $confirmResign) {
-                Button("Resign", role: .destructive) { vm.resign() }
-                Button("Cancel", role: .cancel) {}
+            .alert("Đầu hàng ván này?", isPresented: $confirmResign) {
+                Button("Đầu hàng", role: .destructive) { vm.resign() }
+                Button("Hủy", role: .cancel) {}
             }
         }
         .navigationViewStyle(.stack)
@@ -348,18 +348,18 @@ struct PlayView: View {
 
     private var controls: some View {
         HStack(spacing: 18) {
-            Button { vm.undo() } label: { Label("Undo", systemImage: "arrow.uturn.backward") }
+            Button { vm.undo() } label: { Label("Đi lại", systemImage: "arrow.uturn.backward") }
                 .disabled(vm.session.moves.isEmpty || vm.thinking)
-            Button { vm.flipped.toggle() } label: { Label("Flip", systemImage: "arrow.up.arrow.down") }
-            Button { vm.saveNow() } label: { Label("Save", systemImage: "square.and.arrow.down") }
+            Button { vm.flipped.toggle() } label: { Label("Lật bàn cờ", systemImage: "arrow.up.arrow.down") }
+            Button { vm.saveNow() } label: { Label("Lưu", systemImage: "square.and.arrow.down") }
                 .disabled(vm.session.moves.isEmpty)
             Menu {
-                Button("Resign", role: .destructive) { confirmResign = true }
+                Button("Đầu hàng", role: .destructive) { confirmResign = true }
                 if vm.opponent == .human {
-                    Button("Agree a draw") { vm.offerDraw() }
+                    Button("Đồng ý hòa") { vm.offerDraw() }
                 }
             } label: {
-                Label("More", systemImage: "ellipsis.circle")
+                Label("Thêm", systemImage: "ellipsis.circle")
             }
             .disabled(vm.session.isOver)
         }
@@ -398,20 +398,20 @@ private struct SetupSheet: View {
     var body: some View {
         NavigationView {
             Form {
-                Section(header: Text("Opponent")) {
-                    Picker("Opponent", selection: $vm.opponent) {
+                Section(header: Text("Đối thủ")) {
+                    Picker("Đối thủ", selection: $vm.opponent) {
                         ForEach(OpponentKind.allCases) { Text($0.rawValue).tag($0) }
                     }
                     .pickerStyle(.segmented)
 
                     if vm.opponent == .stockfish {
-                        Picker("Strength", selection: $vm.levelID) {
+                        Picker("Độ mạnh", selection: $vm.levelID) {
                             ForEach(PlayLevel.all) { Text($0.name).tag($0.id) }
                         }
                     }
                     if vm.opponent == .python {
                         if bots.bots.isEmpty {
-                            Text("No bots yet. Import a .py file in the Bots tab.")
+                            Text("Chưa có bot nào. Hãy nhập file .py ở tab Bot.")
                                 .foregroundColor(.secondary)
                         } else {
                             Picker("Bot", selection: $vm.botFilename) {
@@ -421,25 +421,25 @@ private struct SetupSheet: View {
                     }
                 }
                 if vm.opponent != .human {
-                    Section(header: Text("You play")) {
-                        Picker("Colour", selection: $vm.colorChoice) {
+                    Section(header: Text("Bạn cầm quân")) {
+                        Picker("Màu quân", selection: $vm.colorChoice) {
                             ForEach(ColorChoice.allCases) { Text($0.rawValue).tag($0) }
                         }
                         .pickerStyle(.segmented)
                     }
                 }
                 Section {
-                    Button("Start game") {
+                    Button("Bắt đầu ván cờ") {
                         vm.startNewGame(bots: bots.bots)
                         isPresented = false
                     }
                 }
             }
-            .navigationTitle("New game")
+            .navigationTitle("Ván mới")
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
                 ToolbarItem(placement: .navigationBarLeading) {
-                    Button("Cancel") { isPresented = false }
+                    Button("Hủy") { isPresented = false }
                 }
             }
         }
