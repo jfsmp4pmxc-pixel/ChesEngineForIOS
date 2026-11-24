@@ -23,6 +23,8 @@ final class PlayViewModel: ObservableObject {
     @Published var thinking = false
     @Published var message: String? = nil
     @Published var pendingPromotion: (from: Int, to: Int)? = nil
+    /// Moves queued while the opponent is thinking; each is played after the opponent's reply.
+    @Published var premoves: [Move] = []
 
     // New-game configuration
     @Published var opponent: OpponentKind = .stockfish
@@ -49,15 +51,61 @@ final class PlayViewModel: ObservableObject {
         return opponent == .human || session.position.turn == humanSide
     }
 
+    /// Premoves can be queued (without limit) while the engine or bot is to move.
+    var canPremove: Bool {
+        return opponent != .human && !session.isOver && session.position.turn != humanSide
+    }
+
+    /// The position as it will be if every queued premove is played, with the human
+    /// side always to move (so the next premove is chosen from pseudo-legal moves).
+    private func virtualBoard(after moves: [Move]) -> Position {
+        var pos = session.position
+        pos.turn = humanSide
+        pos.epSquare = nil
+        for m in moves {
+            pos = pos.make(m)
+            pos.turn = humanSide
+            pos.epSquare = nil
+        }
+        return pos
+    }
+
+    var premoveBoard: Position { return virtualBoard(after: premoves) }
+
+    /// Faint pieces drawn where the premoves lead, and the real pieces they leave or take.
+    var premoveGhosts: (ghosts: [Int: Piece], dimmed: Set<Int>) {
+        guard !premoves.isEmpty else { return ([:], []) }
+        let real = session.position.board
+        let virt = premoveBoard.board
+        var ghosts: [Int: Piece] = [:]
+        var dimmed = Set<Int>()
+        for sq in 0..<64 {
+            let a = real[sq]
+            let b = virt[sq]
+            if a?.type == b?.type && a?.side == b?.side { continue }
+            if let b = b { ghosts[sq] = b }
+            if a != nil { dimmed.insert(sq) }
+        }
+        return (ghosts, dimmed)
+    }
+
     var legalTargets: Set<Int> {
         guard let s = selected else { return [] }
+        if canPremove {
+            return Set(premoveBoard.pseudoMoves().filter { $0.from == s }.map { $0.to })
+        }
         return Set(session.position.legalMoves().filter { $0.from == s }.map { $0.to })
+    }
+
+    func clearPremoves() {
+        premoves = []
+        if canPremove { selected = nil }
     }
 
     var opponentName: String {
         switch opponent {
         case .human: return "Người chơi 2"
-        case .stockfish: return "Stockfish 17.1 · \(level.name)"
+        case .stockfish: return "\(StockfishEngine.versionName) · \(level.name)"
         case .python: return activeBot?.name ?? "Bot Python"
         }
     }
@@ -82,6 +130,7 @@ final class PlayViewModel: ObservableObject {
         message = nil
         selected = nil
         pendingPromotion = nil
+        premoves = []
         session = GameSession()
         recordID = UUID()
         started = Date()
@@ -104,8 +153,42 @@ final class PlayViewModel: ObservableObject {
         requestOpponentMove()
     }
 
+    private func tapPremove(_ sq: Int) {
+        let pos = premoveBoard
+        if let sel = selected {
+            if sq == sel {
+                selected = nil
+                return
+            }
+            let candidates = pos.pseudoMoves().filter { $0.from == sel && $0.to == sq }
+            if candidates.count > 1 {
+                pendingPromotion = (sel, sq)
+                return
+            }
+            if let m = candidates.first {
+                premoves.append(m)
+                selected = nil
+                return
+            }
+        }
+        if let p = pos.board[sq], p.side == humanSide {
+            selected = sq
+        } else {
+            selected = nil
+        }
+    }
+
+    func cancelPromotion() {
+        pendingPromotion = nil
+    }
+
     func tap(_ sq: Int) {
-        guard !session.isOver, !thinking, isHumanTurn, pendingPromotion == nil else { return }
+        guard !session.isOver, pendingPromotion == nil else { return }
+        if canPremove {
+            tapPremove(sq)
+            return
+        }
+        guard !thinking, isHumanTurn else { return }
         let pos = session.position
 
         if let sel = selected {
@@ -134,6 +217,11 @@ final class PlayViewModel: ObservableObject {
         guard let pp = pendingPromotion else { return }
         pendingPromotion = nil
         let m = Move(from: pp.from, to: pp.to, promotion: type)
+        if canPremove {
+            if premoveBoard.pseudoMoves().contains(m) { premoves.append(m) }
+            selected = nil
+            return
+        }
         if session.position.legalMoves().contains(m) { play(m) }
     }
 
@@ -155,6 +243,7 @@ final class PlayViewModel: ObservableObject {
     func undo() {
         guard !thinking, !session.moves.isEmpty else { return }
         generation = UUID()
+        premoves = []
         let plies: Int
         if opponent == .human {
             plies = 1
@@ -171,6 +260,7 @@ final class PlayViewModel: ObservableObject {
         guard !session.isOver else { return }
         generation = UUID()
         thinking = false
+        premoves = []
         let side = opponent == .human ? session.position.turn : humanSide
         session.resign(side)
         persist()
@@ -199,6 +289,26 @@ final class PlayViewModel: ObservableObject {
     }
 
     // MARK: Opponent
+
+    /// Plays the first queued premove after the opponent has moved. A premove that is not
+    /// legal any more cancels the whole queue.
+    @MainActor
+    private func runPremove(generation gen: UUID) async {
+        guard !premoves.isEmpty else { return }
+        if session.isOver {
+            premoves = []
+            return
+        }
+        try? await Task.sleep(nanoseconds: 250_000_000)
+        guard gen == generation, !premoves.isEmpty, !session.isOver else { return }
+        let next = premoves.removeFirst()
+        if session.position.turn == humanSide, session.position.legalMoves().contains(next) {
+            selected = nil
+            play(next)
+        } else {
+            premoves = []
+        }
+    }
 
     private func requestOpponentMove() {
         guard opponent != .human, !session.isOver, session.position.turn != humanSide else { return }
@@ -247,6 +357,7 @@ final class PlayViewModel: ObservableObject {
             if let m = chosen {
                 session.play(m)
                 afterMove()
+                await runPremove(generation: gen)
             } else {
                 message = problem ?? "Đối thủ không tìm được nước đi."
             }
@@ -274,6 +385,9 @@ struct PlayView: View {
                               lastMove: vm.session.lastMove,
                               selected: vm.selected,
                               legalTargets: vm.legalTargets,
+                              premoves: vm.premoves,
+                              ghosts: vm.premoveGhosts.ghosts,
+                              dimmed: vm.premoveGhosts.dimmed,
                               onTap: { vm.tap($0) })
                         .padding(.horizontal, 8)
 
@@ -289,6 +403,15 @@ struct PlayView: View {
                             .foregroundColor(.orange)
                             .multilineTextAlignment(.center)
                             .padding(.horizontal)
+                    }
+
+                    if !vm.premoves.isEmpty {
+                        Button {
+                            vm.clearPremoves()
+                        } label: {
+                            Label("Hủy \(vm.premoves.count) nước đi trước", systemImage: "xmark.circle")
+                        }
+                        .font(.subheadline)
                     }
 
                     controls
@@ -314,7 +437,7 @@ struct PlayView: View {
                 Button("Xe") { vm.choosePromotion(.rook) }
                 Button("Tượng") { vm.choosePromotion(.bishop) }
                 Button("Mã") { vm.choosePromotion(.knight) }
-                Button("Hủy", role: .cancel) { vm.pendingPromotion = nil }
+                Button("Hủy", role: .cancel) { vm.cancelPromotion() }
             }
             .alert("Đầu hàng ván này?", isPresented: $confirmResign) {
                 Button("Đầu hàng", role: .destructive) { vm.resign() }

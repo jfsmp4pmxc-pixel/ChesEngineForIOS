@@ -340,7 +340,7 @@ enum ReviewAnalyzer {
                           whiteCounts: whiteCounts,
                           blackCounts: blackCounts,
                           opening: Openings.name(for: ucis),
-                          engine: "Stockfish 17.1 (\(profile.title))",
+                          engine: "\(StockfishEngine.versionName) (\(profile.title))",
                           depth: profile.analysisDepth,
                           generatedAt: Date())
     }

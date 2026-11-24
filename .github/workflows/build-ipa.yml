@@ -15,7 +15,7 @@ jobs:
     runs-on: macos-latest
     timeout-minutes: 75
     env:
-      SF_TAG: sf_17.1
+      SF_TAG: sf_19
       PY_SERIES: "3.13"
     steps:
       - uses: actions/checkout@v4

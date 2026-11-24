@@ -8,7 +8,7 @@
 set -eo pipefail
 
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
-SF_TAG="${SF_TAG:-sf_17.1}"
+SF_TAG="${SF_TAG:-sf_19}"
 BUILD="$ROOT/build"
 SRC="$BUILD/stockfish"
 OBJ="$BUILD/obj"
@@ -19,7 +19,7 @@ mkdir -p "$BUILD/lib" "$OBJ" "$NETS"
 
 net_count() { find "$NETS" -name 'nn-*.nnue' | wc -l | tr -d ' '; }
 
-if [ -f "$LIB" ] && [ "$(net_count)" -ge 2 ]; then
+if [ -f "$LIB" ] && [ "$(net_count)" -ge 1 ]; then
   echo "Stockfish library and networks already present, skipping."
   exit 0
 fi
@@ -30,14 +30,25 @@ if [ ! -d "$SRC/src" ]; then
   git clone --depth 1 --branch "$SF_TAG" https://github.com/official-stockfish/Stockfish.git "$SRC"
 fi
 
+# Stockfish 19 can keep network weights in shared memory; that code is meant for
+# desktop systems and is not useful inside an iOS app sandbox. Leave it out on iOS
+# so the engine uses plain memory (the dummy backend that Stockfish already has).
+if ! grep -q "__ENVIRONMENT_IPHONE_OS_VERSION_MIN_REQUIRED__" "$SRC/src/shm.h"; then
+  sed -i.bak 's/|| defined(__APPLE__) ||/|| (defined(__APPLE__) \&\& !defined(__ENVIRONMENT_IPHONE_OS_VERSION_MIN_REQUIRED__)) ||/' "$SRC/src/shm.h"
+  rm -f "$SRC/src/shm.h.bak"
+fi
+
 # ---- Networks -------------------------------------------------------------
-for kind in Big Small; do
-  name="$(grep -rhoE "EvalFileDefaultName${kind}[[:space:]]+\"nn-[0-9a-f]+\.nnue\"" "$SRC/src" \
-          | grep -oE 'nn-[0-9a-f]+\.nnue' | head -n1 || true)"
-  if [ -z "$name" ]; then
-    echo "Could not find the default $kind network name in the Stockfish sources" >&2
-    exit 1
-  fi
+# Stockfish 17.x names a big and a small network, Stockfish 19 only one. Take every
+# default network that the sources name.
+NET_NAMES="$(grep -rhoE 'EvalFileDefaultName[A-Za-z]*[[:space:]]+"nn-[0-9a-f]+\.nnue"' "$SRC/src" \
+             | grep -oE 'nn-[0-9a-f]+\.nnue' | sort -u || true)"
+if [ -z "$NET_NAMES" ]; then
+  echo "Could not find a default network name in the Stockfish sources" >&2
+  exit 1
+fi
+
+for name in $NET_NAMES; do
   if [ ! -f "$NETS/$name" ]; then
     echo "Downloading $name"
     curl -fL --retry 4 --retry-delay 3 -o "$NETS/$name" "https://data.stockfishchess.org/nn/$name"
@@ -99,7 +110,7 @@ while IFS= read -r f; do
   pids+=("$!")
   names+=("$rel")
   while [ "${#pids[@]}" -ge "$JOBS" ]; do wait_oldest; done
-done < <(find "$SRC/src" -name '*.cpp' | sort)
+done < <(find "$SRC/src" -name '*.cpp' -not -path "$SRC/src/universal/*" | sort)
 
 # Our bridge (only uses the standard library).
 compile "$ROOT/bridge/stockfish_bridge.cpp" "$OBJ/bridge.o" -I"$ROOT/bridge" &

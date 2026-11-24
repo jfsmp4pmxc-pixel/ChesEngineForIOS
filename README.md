@@ -6,6 +6,7 @@
 
 - **Chơi cờ**: hai người, chơi với Stockfish (8 mức độ, từ Mới học đến Tối đa) hoặc với bot Python. Đủ luật: nhập thành, bắt tốt qua đường, phong cấp, chiếu hết, hòa cờ, lặp thế 3 lần, luật 50 nước.
 - **Lưu ván**: tự lưu khi ván kết thúc (hoặc bấm Lưu), lưu trong `Documents/Games` (xem được trong app Tệp). Nhập/xuất PGN (dán văn bản hoặc chọn file `.pgn`).
+- **Hiệu ứng và đi trước**: quân trượt mượt từ ô đi sang ô đến (cả xe khi nhập thành, và khi đi lại); bật/tắt ở Cài đặt. Khi đối thủ đang nghĩ, bạn có thể đi trước (premove) không giới hạn số nước; mỗi nước được đi sau khi đối thủ đáp, nếu không còn hợp lệ thì cả hàng đợi bị hủy.
 - **Xem lại và phân tích**: Stockfish đánh giá từng thế cờ, phân loại nước đi giống chess.com: Thiên tài, Tuyệt vời, Tốt nhất, Xuất sắc, Tốt, Khai cuộc, Thiếu chính xác, Sai lầm, Sai lầm nghiêm trọng, Bắt buộc. Biểu tượng phân loại hiện ở góc trên bên phải ô cờ của quân vừa đi. Nước thiên tài là nước hy sinh quân thực sự mà vẫn giữ được (hoặc cải thiện) thế cờ; với các nước hy sinh nghi ngờ, app tìm sâu thêm một lần trước khi kết luận. Có thanh đánh giá, biểu đồ đánh giá, mũi tên nước tốt nhất, độ chính xác từng bên và tên khai cuộc.
 - **Bot ngoài (.py)**: nhập file Python ở tab *Bot*. Xem phần dưới.
 - **Hồ sơ engine**: *Lite* (độ sâu 12, 1 luồng, hash 16 MB) hoặc *Full* (độ sâu 18, nhiều luồng, hash 64 MB) trong tab *Cài đặt*.
@@ -13,7 +14,7 @@
 
 ### Lưu ý về phiên bản Stockfish
 
-Bản dựng dùng **Stockfish 17.1** (tag `sf_17.1`), bản chính thức mới nhất mà mình xác nhận được. Stockfish 18/19 chưa được tích hợp; đổi biến `SF_TAG` trong workflow khi có bản mới và tương thích (cần kiểm tra lại cách tải network trong `scripts/build_stockfish.sh`). Lite/Full hiện là hai hồ sơ cấu hình tìm kiếm, không phải hai network khác nhau.
+Bản dựng dùng **Stockfish 19** (tag `sf_19`) với một network NNUE duy nhất tải từ data.stockfishchess.org. Lite/Full là hai hồ sơ cấu hình tìm kiếm (độ sâu, luồng, hash), không phải hai network khác nhau.
 
 Độ chính xác và cách chấm nước đi mô phỏng ý tưởng của chess.com (mất bao nhiêu xác suất thắng so với nước tốt nhất) nhưng **không giống hệt** thuật toán độc quyền của họ.
 
@@ -38,7 +39,7 @@ Workflow: [`.github/workflows/build-ipa.yml`](.github/workflows/build-ipa.yml), 
 Các bước:
 
 1. Cài XcodeGen và tạo `ChessEngine.xcodeproj` từ [`project.yml`](project.yml).
-2. [`scripts/build_stockfish.sh`](scripts/build_stockfish.sh): tải Stockfish `sf_17.1`, biên dịch thành `libstockfish.a` cho iOS arm64 cùng cầu nối UCI trong [`bridge/`](bridge), tải hai file network `.nnue` và kiểm tra checksum.
+2. [`scripts/build_stockfish.sh`](scripts/build_stockfish.sh): tải Stockfish `sf_19`, biên dịch thành `libstockfish.a` cho iOS arm64 cùng cầu nối UCI trong [`bridge/`](bridge), tải file network `.nnue` và kiểm tra checksum.
 3. [`scripts/fetch_python.sh`](scripts/fetch_python.sh) (không bắt buộc): tải runtime Python cho iOS. Nếu bước này lỗi thì app vẫn build, chỉ mất tính năng bot Python.
 4. `xcodebuild` với `CODE_SIGNING_ALLOWED=NO` (không ký).
 5. [`scripts/package_ipa.sh`](scripts/package_ipa.sh): gói `.app` vào `Payload/`, nhúng Python (chuyển các module `.so` thành framework như CPython yêu cầu trên iOS) và nén thành `ChessEngine-unsigned.ipa`.

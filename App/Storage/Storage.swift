@@ -22,6 +22,8 @@ enum Paths {
 
 enum Prefs {
     static let profileKey = "engineProfile"
+    /// Whether pieces slide from one square to the other (on by default).
+    static let animateKey = "animateMoves"
 
     static var profile: EngineProfile {
         get {

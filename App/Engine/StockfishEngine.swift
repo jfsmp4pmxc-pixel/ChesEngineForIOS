@@ -79,6 +79,9 @@ struct SearchResult {
 final class StockfishEngine {
     static let shared = StockfishEngine()
 
+    /// Name shown in the interface.
+    static let versionName = "Stockfish 19"
+
     private let workQueue = DispatchQueue(label: "chess.stockfish.search", qos: .userInitiated)
     private var started = false
     private var failure: String?
@@ -126,8 +129,8 @@ final class StockfishEngine {
 
         let netsDir = Bundle.main.bundlePath + "/nets"
         let nets = (try? FileManager.default.contentsOfDirectory(atPath: netsDir))?.filter { $0.hasSuffix(".nnue") } ?? []
-        guard nets.count >= 2 else {
-            failure = "Thiếu các file mạng nơ-ron Stockfish (.nnue) trong ứng dụng."
+        guard nets.count >= 1 else {
+            failure = "Thiếu file mạng nơ-ron Stockfish (.nnue) trong ứng dụng."
             return false
         }
 
@@ -170,6 +173,9 @@ final class StockfishEngine {
                     multiPV: Int,
                     strength: Strength,
                     profile: EngineProfile) -> SearchResult? {
+        // Stockfish 19 ends the whole process when it is given an invalid position,
+        // so never send it one.
+        guard let checked = Position(fen: fen), checked.isSafeForEngine else { return nil }
         guard ensureStarted() else { return nil }
 
         setOption("Threads", String(profile.threads))
@@ -280,5 +286,23 @@ final class StockfishEngine {
         info.pv = Array(t[(pvIndex + 1)...])
         guard info.cp != nil || info.mate != nil else { return nil }
         return info
+    }
+}
+
+// MARK: - Input safety
+
+extension Position {
+    /// True when Stockfish will accept the position: one king per side, no pawns on the
+    /// first or last rank, and the side that is not to move is not in check.
+    var isSafeForEngine: Bool {
+        var kings = [0, 0]
+        for sq in 0..<64 {
+            guard let p = board[sq] else { continue }
+            if p.type == .king { kings[p.side.rawValue] += 1 }
+            if p.type == .pawn && (sq < 8 || sq >= 56) { return false }
+        }
+        guard kings[0] == 1, kings[1] == 1 else { return false }
+        if let k = kingSquare(turn.opposite), isAttacked(k, by: turn) { return false }
+        return true
     }
 }
