@@ -3,6 +3,7 @@ import SwiftUI
 struct SettingsView: View {
     @AppStorage(Prefs.profileKey) private var profileRaw = EngineProfile.lite.rawValue
     @AppStorage(Prefs.animateKey) private var animate = true
+    @AppStorage(Prefs.slideDurationKey) private var slideDuration = Prefs.defaultSlideDuration
     @AppStorage(Prefs.ratingKey) private var rating = Prefs.defaultRating
     @AppStorage(Prefs.liveKey) private var live = false
     @AppStorage(Prefs.liveOpponentKey) private var liveOpponent = true
@@ -42,6 +43,18 @@ struct SettingsView: View {
 
                 Section(header: Text("Bàn cờ")) {
                     Toggle("Hiệu ứng di chuyển quân", isOn: $animate)
+                    if animate {
+                        VStack(alignment: .leading, spacing: 4) {
+                            HStack {
+                                Text("Thời gian lướt")
+                                Spacer()
+                                Text(String(format: "%.2f giây", slideDuration))
+                                    .foregroundColor(.secondary)
+                                    .monospacedDigit()
+                            }
+                            Slider(value: $slideDuration, in: 0.05...1.0, step: 0.05)
+                        }
+                    }
                 }
 
                 Section(header: Text("Trạng thái engine")) {

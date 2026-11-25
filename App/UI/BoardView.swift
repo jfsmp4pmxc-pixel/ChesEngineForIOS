@@ -92,27 +92,31 @@ private struct Slide: Identifiable {
     let piece: Piece
     let from: Int
     let to: Int
+    /// The piece taken on the destination square, drawn until the mover arrives.
+    var captured: Piece? = nil
 }
 
-/// Draws a piece on its destination square and slides it in from where it came from.
+/// Draws a piece on its destination square and glides it in from where it came from.
+/// The offset is computed from the clock on every frame, so it does not depend on
+/// SwiftUI's implicit animations.
 private struct SlidingPiece: View {
     let piece: Piece
     let size: CGFloat
     /// Distance from the destination back to the origin, in points.
     let dx: CGFloat
     let dy: CGFloat
+    let start: Date
     let duration: Double
-    let onFinished: () -> Void
-
-    @State private var arrived = false
 
     var body: some View {
-        PieceImage(piece: piece, size: size)
-            .offset(x: arrived ? 0 : dx, y: arrived ? 0 : dy)
-            .onAppear {
-                withAnimation(.easeInOut(duration: duration)) { arrived = true }
-                DispatchQueue.main.asyncAfter(deadline: .now() + duration + 0.02) { onFinished() }
-            }
+        TimelineView(.animation) { context in
+            let raw = duration <= 0 ? 1.0 : context.date.timeIntervalSince(start) / duration
+            let t = min(1.0, max(0.0, raw))
+            // Ease in and out.
+            let eased = t < 0.5 ? 2 * t * t : 1 - pow(-2 * t + 2, 2) / 2
+            PieceImage(piece: piece, size: size)
+                .offset(x: dx * CGFloat(1 - eased), y: dy * CGFloat(1 - eased))
+        }
     }
 }
 
@@ -138,6 +142,7 @@ struct BoardView: View {
     var onArrow: ((BoardArrow) -> Void)? = nil
 
     @AppStorage(Prefs.animateKey) private var animate = true
+    @AppStorage(Prefs.slideDurationKey) private var slideDuration = Prefs.defaultSlideDuration
     @State private var pendingArrowStart: Int? = nil
 
     /// The position that is currently drawn. It follows `position` one step later so a
@@ -145,10 +150,11 @@ struct BoardView: View {
     @State private var shown: Position
     @State private var shownMove: Move?
     @State private var slides: [Slide] = []
+    @State private var slideStart = Date()
+    @State private var slideToken = UUID()
 
     private let lightColor = Color(red: 0.93, green: 0.93, blue: 0.82)
     private let darkColor = Color(red: 0.46, green: 0.59, blue: 0.34)
-    private let slideDuration = 0.2
 
     init(position: Position,
          flipped: Bool = false,
@@ -188,6 +194,15 @@ struct BoardView: View {
 
     private var hiddenSquares: Set<Int> {
         return Set(slides.map { $0.to })
+    }
+
+    /// Pieces that were just taken, still shown on their square while the capturer glides in.
+    private var capturedDuringSlide: [Int: Piece] {
+        var result: [Int: Piece] = [:]
+        for s in slides {
+            if let c = s.captured { result[s.to] = c }
+        }
+        return result
     }
 
     private var premoveSquares: Set<Int> {
@@ -235,8 +250,8 @@ struct BoardView: View {
                                  size: cell,
                                  dx: a.x - b.x,
                                  dy: a.y - b.y,
-                                 duration: slideDuration,
-                                 onFinished: { finishSlide(s.id) })
+                                 start: slideStart,
+                                 duration: slideDuration)
                         .position(x: b.x, y: b.y)
                         .allowsHitTesting(false)
                 }
@@ -304,20 +319,25 @@ struct BoardView: View {
     private func positionChanged(to new: Position) {
         let old = shown
         var newSlides: [Slide] = []
-        if animate {
+        if animate, slideDuration > 0.01 {
             if let move = lastMove, old.board[move.from] != nil, old.make(move) == new {
                 newSlides = BoardView.makeSlides(move: move, old: old, new: new, forward: true)
             } else if let prev = shownMove, new.board[prev.from] != nil, new.make(prev) == old {
                 newSlides = BoardView.makeSlides(move: prev, old: old, new: new, forward: false)
             }
         }
+        let token = UUID()
+        slideToken = token
+        slideStart = Date()
         shown = new
         shownMove = lastMove
         slides = newSlides
-    }
-
-    private func finishSlide(_ id: UUID) {
-        slides.removeAll { $0.id == id }
+        guard !newSlides.isEmpty else { return }
+        // Drop the sliding pieces once they have arrived (unless a newer move replaced them).
+        let wait = slideDuration + 0.05
+        DispatchQueue.main.asyncAfter(deadline: .now() + wait) {
+            if slideToken == token { slides = [] }
+        }
     }
 
     /// The pieces that travel when `move` is played (`forward`) or taken back.
@@ -327,9 +347,13 @@ struct BoardView: View {
         // square when the move is taken back.
         let mover = forward ? new.board[move.to] : new.board[move.from]
         if let p = mover {
-            result.append(Slide(piece: p,
-                                from: forward ? move.from : move.to,
-                                to: forward ? move.to : move.from))
+            var slide = Slide(piece: p,
+                              from: forward ? move.from : move.to,
+                              to: forward ? move.to : move.from)
+            if forward, let taken = old.board[move.to], taken.side != p.side {
+                slide.captured = taken
+            }
+            result.append(slide)
         }
         // Castling moves the rook as well.
         let king = forward ? old.board[move.from] : new.board[move.from]
@@ -390,6 +414,8 @@ struct BoardView: View {
             if let p = shown.board[sq], !hiddenSquares.contains(sq) {
                 PieceImage(piece: p, size: cell)
                     .opacity(dimmed.contains(sq) ? 0.35 : 1)
+            } else if let c = capturedDuringSlide[sq] {
+                PieceImage(piece: c, size: cell)
             }
             if let g = ghosts[sq] {
                 PieceImage(piece: g, size: cell)

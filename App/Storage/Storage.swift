@@ -24,6 +24,9 @@ enum Prefs {
     static let profileKey = "engineProfile"
     /// Whether pieces slide from one square to the other (on by default).
     static let animateKey = "animateMoves"
+    /// How long a piece takes to glide to its square, in seconds.
+    static let slideDurationKey = "slideDuration"
+    static let defaultSlideDuration = 0.25
     /// Rating used to tune move classification (lower ratings are judged more leniently).
     static let ratingKey = "playerRating"
     static let defaultRating = 1500
