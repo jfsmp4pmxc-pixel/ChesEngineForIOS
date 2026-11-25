@@ -143,6 +143,10 @@ struct BoardView: View {
 
     @AppStorage(Prefs.animateKey) private var animate = true
     @AppStorage(Prefs.slideDurationKey) private var slideDuration = Prefs.defaultSlideDuration
+    @AppStorage(Theme.lightSquareKey) private var lightHex = Theme.defaultLight
+    @AppStorage(Theme.darkSquareKey) private var darkHex = Theme.defaultDark
+    @AppStorage(Theme.userArrowKey) private var userArrowHex = Theme.defaultUserArrow
+    @AppStorage(Theme.bestArrowKey) private var bestArrowHex = Theme.defaultBestArrow
     @State private var pendingArrowStart: Int? = nil
 
     /// The position that is currently drawn. It follows `position` one step later so a
@@ -153,8 +157,10 @@ struct BoardView: View {
     @State private var slideStart = Date()
     @State private var slideToken = UUID()
 
-    private let lightColor = Color(red: 0.93, green: 0.93, blue: 0.82)
-    private let darkColor = Color(red: 0.46, green: 0.59, blue: 0.34)
+    private var lightColor: Color { Color(hex: lightHex) ?? Color(hex: Theme.defaultLight) ?? .white }
+    private var darkColor: Color { Color(hex: darkHex) ?? Color(hex: Theme.defaultDark) ?? .green }
+    private var userArrowColor: Color { Color(hex: userArrowHex) ?? Color(hex: Theme.defaultUserArrow) ?? .green }
+    private var bestArrowColor: Color { Color(hex: bestArrowHex) ?? Color(hex: Theme.defaultBestArrow) ?? .orange }
 
     init(position: Position,
          flipped: Bool = false,
@@ -233,14 +239,14 @@ struct BoardView: View {
                     ArrowShape(from: center(of: a.from, cell: cell),
                                to: center(of: a.to, cell: cell),
                                width: cell * 0.16)
-                        .fill(Color(red: 0.15, green: 0.65, blue: 0.30).opacity(0.78))
+                        .fill(userArrowColor.opacity(0.78))
                         .allowsHitTesting(false)
                 }
                 if let a = arrow {
                     ArrowShape(from: center(of: a.from, cell: cell),
                                to: center(of: a.to, cell: cell),
                                width: cell * 0.18)
-                        .fill(Color.orange.opacity(0.8))
+                        .fill(bestArrowColor.opacity(0.8))
                         .allowsHitTesting(false)
                 }
                 ForEach(slides) { s in
@@ -320,9 +326,16 @@ struct BoardView: View {
         let old = shown
         var newSlides: [Slide] = []
         if animate, slideDuration > 0.01 {
-            if let move = lastMove, old.board[move.from] != nil, old.make(move) == new {
+            if let move = lastMove, move != shownMove,
+               let mover = old.board[move.from], new.board[move.to] != nil,
+               new.board[move.to]?.side == mover.side, new.board[move.from] == nil || move.from == move.to {
+                // A move was played: slide the piece from its old square to the new one.
                 newSlides = BoardView.makeSlides(move: move, old: old, new: new, forward: true)
-            } else if let prev = shownMove, new.board[prev.from] != nil, new.make(prev) == old {
+            } else if let prev = shownMove, prev != lastMove,
+                      old.board[prev.to] != nil, new.board[prev.from] != nil,
+                      old.board[prev.to]?.side == new.board[prev.from]?.side,
+                      new.make(prev) == old {
+                // A move was taken back: slide the piece home.
                 newSlides = BoardView.makeSlides(move: prev, old: old, new: new, forward: false)
             }
         }

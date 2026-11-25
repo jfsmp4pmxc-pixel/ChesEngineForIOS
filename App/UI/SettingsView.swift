@@ -57,6 +57,10 @@ struct SettingsView: View {
                     }
                 }
 
+                Section {
+                    NavigationLink("Giao diện: màu, quân cờ, nhãn") { AppearanceView() }
+                }
+
                 Section(header: Text("Trạng thái engine")) {
                     Button {
                         checking = true

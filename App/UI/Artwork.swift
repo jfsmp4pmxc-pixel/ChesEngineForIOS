@@ -22,10 +22,16 @@ enum PieceArt {
 struct PieceImage: View {
     let piece: Piece
     let size: CGFloat
+    @AppStorage(Theme.assetsVersionKey) private var assetsVersion = 0
 
     var body: some View {
         let name = PieceArt.assetName(piece)
-        if UIImage(named: name) != nil {
+        if let custom = CustomAssets.image(named: name) {
+            Image(uiImage: custom)
+                .resizable()
+                .scaledToFit()
+                .frame(width: size, height: size)
+        } else if UIImage(named: name) != nil {
             Image(name)
                 .resizable()
                 .scaledToFit()
@@ -43,9 +49,14 @@ struct PieceImage: View {
 /// Round badge showing how good a move was (Brilliant, Blunder, ...).
 struct ClassIcon: View {
     let cls: MoveClass
+    @AppStorage(Theme.assetsVersionKey) private var assetsVersion = 0
 
     var body: some View {
-        if UIImage(named: cls.iconName) != nil {
+        if let custom = CustomAssets.image(named: cls.iconName) {
+            Image(uiImage: custom)
+                .resizable()
+                .scaledToFit()
+        } else if UIImage(named: cls.iconName) != nil {
             Image(cls.iconName)
                 .resizable()
                 .scaledToFit()

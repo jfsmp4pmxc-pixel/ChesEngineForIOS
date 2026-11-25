@@ -309,7 +309,9 @@ final class PlayViewModel: ObservableObject {
     }
 
     func tap(_ sq: Int) {
-        guard !session.isOver, pendingPromotion == nil else { return }
+        guard !session.isOver else { return }
+        // The dialog was dismissed without a choice: forget it and treat this as a fresh tap.
+        if pendingPromotion != nil { pendingPromotion = nil }
         if canPremove {
             tapPremove(sq)
             return
@@ -573,7 +575,9 @@ struct PlayView: View {
             }
             .confirmationDialog("Phong cấp thành", isPresented: Binding(
                 get: { vm.pendingPromotion != nil },
-                set: { if !$0 { vm.pendingPromotion = nil } })) {
+                // SwiftUI sets this to false as soon as a button is pressed, before the button's
+                // action runs; clearing the promotion here is what made every choice fail.
+                set: { _ in })) {
                 Button("Hậu") { vm.choosePromotion(.queen) }
                 Button("Xe") { vm.choosePromotion(.rook) }
                 Button("Tượng") { vm.choosePromotion(.bishop) }
