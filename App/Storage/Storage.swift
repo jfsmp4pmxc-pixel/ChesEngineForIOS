@@ -24,6 +24,14 @@ enum Prefs {
     static let profileKey = "engineProfile"
     /// Whether pieces slide from one square to the other (on by default).
     static let animateKey = "animateMoves"
+    /// Rating used to tune move classification (lower ratings are judged more leniently).
+    static let ratingKey = "playerRating"
+    static let defaultRating = 1500
+
+    static var rating: Int {
+        let v = UserDefaults.standard.integer(forKey: ratingKey)
+        return v == 0 ? defaultRating : max(400, min(3000, v))
+    }
 
     static var profile: EngineProfile {
         get {

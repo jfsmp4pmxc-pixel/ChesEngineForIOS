@@ -33,7 +33,7 @@ final class ReviewViewModel: ObservableObject {
     /// Arrow showing what the engine preferred to the move just played.
     var bestArrow: (from: Int, to: Int)? {
         guard let r = currentReview, let best = r.bestUCI, best != r.uci,
-              [.inaccuracy, .mistake, .blunder, .good, .excellent].contains(r.classification),
+              [.inaccuracy, .mistake, .miss, .blunder, .good, .excellent].contains(r.classification),
               let m = positions[index - 1].move(fromUCI: best) else { return nil }
         return (m.from, m.to)
     }
@@ -42,7 +42,7 @@ final class ReviewViewModel: ObservableObject {
         index = max(0, min(moves.count, i))
     }
 
-    func analyze(profile: EngineProfile, store: GameStore) {
+    func analyze(profile: EngineProfile, rating: Int, store: GameStore) {
         guard !analyzing else { return }
         analyzing = true
         progress = 0
@@ -50,7 +50,7 @@ final class ReviewViewModel: ObservableObject {
         let rec = record
         task = Task { @MainActor in
             do {
-                let review = try await ReviewAnalyzer.analyze(record: rec, profile: profile) { p in
+                let review = try await ReviewAnalyzer.analyze(record: rec, profile: profile, rating: rating) { p in
                     await MainActor.run { self.progress = p }
                 }
                 var updated = rec
@@ -167,7 +167,7 @@ struct ReviewView: View {
                     }
                 }
                 if let best = r.bestSAN, r.bestUCI != r.uci,
-                   [.good, .excellent, .inaccuracy, .mistake, .blunder].contains(r.classification) {
+                   [.good, .excellent, .inaccuracy, .mistake, .miss, .blunder].contains(r.classification) {
                     Text("Nước tốt nhất là \(best)").font(.footnote).foregroundColor(.secondary)
                 }
             }
@@ -248,7 +248,7 @@ struct ReviewView: View {
                 Button("Hủy", role: .cancel) { vm.cancel() }
             } else {
                 Button {
-                    vm.analyze(profile: profile, store: store)
+                    vm.analyze(profile: profile, rating: Prefs.rating, store: store)
                 } label: {
                     Label(vm.record.review == nil ? "Phân tích ván cờ" : "Phân tích lại",
                           systemImage: "waveform.path.ecg")

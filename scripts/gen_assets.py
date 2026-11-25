@@ -181,6 +181,8 @@ CLASSES = {
     "inaccuracy": ("#f2b925", "#c18f0b",
                    lambda: Glyph(34, 0.92).question() + Glyph(70, 0.92).bang()),
     "mistake": ("#e58f2a", "#b86a10", lambda: Glyph(50, 1.05).question()),
+    "miss": ("#e06a5b", "#b04a3d",
+             lambda: path("M31 31 L69 69 M69 31 L31 69", "none", "#ffffff", 11)),
     "blunder": ("#ca3431", "#9b2220",
                 lambda: Glyph(32, 0.92).question() + Glyph(68, 0.92).question()),
     "forced": ("#8b8987", "#666462", lambda: path(

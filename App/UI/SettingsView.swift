@@ -3,6 +3,7 @@ import SwiftUI
 struct SettingsView: View {
     @AppStorage(Prefs.profileKey) private var profileRaw = EngineProfile.lite.rawValue
     @AppStorage(Prefs.animateKey) private var animate = true
+    @AppStorage(Prefs.ratingKey) private var rating = Prefs.defaultRating
     @State private var status: String? = nil
     @State private var checking = false
 
@@ -17,6 +18,17 @@ struct SettingsView: View {
                         ForEach(EngineProfile.allCases) { Text($0.title).tag($0.rawValue) }
                     }
                     .pickerStyle(.segmented)
+                }
+
+                Section(header: Text("Chấm điểm nước đi"),
+                        footer: Text("Elo càng thấp thì càng được châm chước sai sót nhỏ, và nước hy sinh quân dễ được tính là thiên tài hơn. Từ 2000 trở lên phải hy sinh ít nhất 2 tốt. Chỉ ảnh hưởng đến lần phân tích tiếp theo.")) {
+                    Stepper(value: $rating, in: 400...3000, step: 50) {
+                        HStack {
+                            Text("Elo của bạn")
+                            Spacer()
+                            Text("\(rating)").foregroundColor(.secondary).monospacedDigit()
+                        }
+                    }
                 }
 
                 Section(header: Text("Bàn cờ")) {

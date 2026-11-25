@@ -7,7 +7,7 @@
 - **Chơi cờ**: hai người, chơi với Stockfish (8 mức độ, từ Mới học đến Tối đa) hoặc với bot Python. Đủ luật: nhập thành, bắt tốt qua đường, phong cấp, chiếu hết, hòa cờ, lặp thế 3 lần, luật 50 nước.
 - **Lưu ván**: tự lưu khi ván kết thúc (hoặc bấm Lưu), lưu trong `Documents/Games` (xem được trong app Tệp). Nhập/xuất PGN (dán văn bản hoặc chọn file `.pgn`).
 - **Hiệu ứng và đi trước**: quân trượt mượt từ ô đi sang ô đến (cả xe khi nhập thành, và khi đi lại); bật/tắt ở Cài đặt. Khi đối thủ đang nghĩ, bạn có thể đi trước (premove) không giới hạn số nước; mỗi nước được đi sau khi đối thủ đáp, nếu không còn hợp lệ thì cả hàng đợi bị hủy.
-- **Xem lại và phân tích**: Stockfish đánh giá từng thế cờ, phân loại nước đi giống chess.com: Thiên tài, Tuyệt vời, Tốt nhất, Xuất sắc, Tốt, Khai cuộc, Thiếu chính xác, Sai lầm, Sai lầm nghiêm trọng, Bắt buộc. Biểu tượng phân loại hiện ở góc trên bên phải ô cờ của quân vừa đi. Nước thiên tài là nước hy sinh quân thực sự mà vẫn giữ được (hoặc cải thiện) thế cờ; với các nước hy sinh nghi ngờ, app tìm sâu thêm một lần trước khi kết luận. Có thanh đánh giá, biểu đồ đánh giá, mũi tên nước tốt nhất, độ chính xác từng bên và tên khai cuộc.
+- **Xem lại và phân tích**: Stockfish đánh giá từng thế cờ, phân loại nước đi giống chess.com: Thiên tài, Tuyệt vời, Tốt nhất, Xuất sắc, Tốt, Khai cuộc, Thiếu chính xác, Sai lầm, Cơ hội bị bỏ lỡ, Sai lầm nghiêm trọng, Bắt buộc. Biểu tượng phân loại hiện ở góc trên bên phải ô cờ của quân vừa đi. Nước thiên tài là nước hy sinh quân thực sự mà vẫn giữ được (hoặc cải thiện) thế cờ; với các nước hy sinh nghi ngờ, app tìm sâu thêm một lần trước khi kết luận. Có thanh đánh giá, biểu đồ đánh giá, mũi tên nước tốt nhất, độ chính xác từng bên và tên khai cuộc.
 - **Bot ngoài (.py)**: nhập file Python ở tab *Bot*. Xem phần dưới.
 - **Hồ sơ engine**: *Lite* (độ sâu 12, 1 luồng, hash 16 MB) hoặc *Full* (độ sâu 18, nhiều luồng, hash 64 MB) trong tab *Cài đặt*.
 - **Giao diện tiếng Việt** và bộ quân cờ, biểu tượng phân loại vẽ vector riêng (xem `scripts/gen_assets.py`; chạy lại script để tạo lại `App/Resources/Assets.xcassets`).
@@ -17,6 +17,21 @@
 Bản dựng dùng **Stockfish 19** (tag `sf_19`) với một network NNUE duy nhất tải từ data.stockfishchess.org. Lite/Full là hai hồ sơ cấu hình tìm kiếm (độ sâu, luồng, hash), không phải hai network khác nhau.
 
 Độ chính xác và cách chấm nước đi mô phỏng ý tưởng của chess.com (mất bao nhiêu xác suất thắng so với nước tốt nhất) nhưng **không giống hệt** thuật toán độc quyền của họ.
+
+## Cách phân loại nước đi
+
+Dựa trên mô hình điểm kỳ vọng (Expected Points). Mỗi thế cờ được đổi từ centipawn sang xác suất thắng `P = 1 / (1 + exp(-k·cp))` (thế chiếu hết không qua công thức này), `k` được chỉnh theo Elo đặt trong tab Cài đặt. Điểm kỳ vọng bị mất: `EPL = max(0, P_trước - P_sau)`. Các tầng được xét theo thứ tự, khớp tầng nào thì dừng:
+
+1. **Bắt buộc**: chỉ có một nước đi hợp lệ.
+2. **Khai cuộc**: nước nằm trong sách khai cuộc có sẵn của app (khoảng 60 biến thể, không đầy đủ như chess.com).
+3. **Thiên tài**: EPL ≤ 0.02, có hy sinh quân thực sự, sau nước đi P ≥ 0.40, trước nước đi P < 0.90; từ 2000 Elo trở lên phải hy sinh ≥ 2 tốt.
+4. **Tuyệt vời** (một trong ba): nước duy nhất tốt (mọi nước khác mất hơn 0.10) và EPL ≤ 0.02; lật thế từ P < 0.50 lên P ≥ 0.70; hoặc P từ ≥ 0.70 tụt xuống < 0.50.
+5. **Cơ hội bị bỏ lỡ**: đối thủ vừa mất ≥ 0.20 điểm kỳ vọng nhưng nước này có EPL ≥ 0.10.
+6. **Bảng ngưỡng**: Tốt nhất (trùng nước engine chọn), Xuất sắc (EPL ≤ 0.02), Tốt (≤ 0.05), Thiếu chính xác (≤ 0.10), Sai lầm (≤ 0.20), Sai lầm nghiêm trọng (> 0.20).
+
+Độ chính xác từng nước: `103.1668·exp(-4·EPL) - 3.1668`; nước Tốt nhất, Thiên tài, Tuyệt vời, Khai cuộc, Bắt buộc tính 100, trong đó Khai cuộc và Bắt buộc không được đưa vào trung bình của ván.
+
+Nhánh thứ ba của "Tuyệt vời" (đánh mất lợi thế lớn) đúng theo đặc tả nhưng sẽ gắn nhãn Tuyệt vời cho chính nước làm mất thế thắng của người chơi; đổi `greatIncludesLostAdvantage` thành `false` trong `App/Analysis/Review.swift` nếu muốn tắt.
 
 ## Viết bot Python
 

@@ -10,16 +10,24 @@ struct Eval: Codable, Equatable {
 
     static let draw = Eval(cp: 0, mate: nil)
 
-    /// Win probability for White in percent (Lichess logistic model).
-    var whiteWinPercent: Double {
+    /// Rating at which the logistic curve is not adjusted.
+    static let referenceRating = 1500
+
+    /// Win probability for White in percent: P = 1 / (1 + exp(-k * cp)). Mate scores are
+    /// never run through the curve. A lower rating makes the curve steeper, which forgives
+    /// small slips more (k scales with the distance from 1500).
+    func whiteWinPercentAdjusted(rating: Int) -> Double {
         if let m = mate { return m > 0 ? 100 : 0 }
         if abs(cp) >= 10000 { return cp > 0 ? 100 : 0 }
-        let c = Double(max(-1000, min(1000, cp)))
-        return 50 + 50 * (2 / (1 + exp(-0.00368208 * c)) - 1)
+        let k = 0.00368208 * (1 + Double(Eval.referenceRating - rating) / 10000)
+        return 100 / (1 + exp(-k * Double(cp)))
     }
 
-    func winPercent(for side: Side) -> Double {
-        return side == .white ? whiteWinPercent : 100 - whiteWinPercent
+    var whiteWinPercent: Double { return whiteWinPercentAdjusted(rating: Eval.referenceRating) }
+
+    func winPercent(for side: Side, rating: Int = Eval.referenceRating) -> Double {
+        let white = whiteWinPercentAdjusted(rating: rating)
+        return side == .white ? white : 100 - white
     }
 
     var display: String {
@@ -46,7 +54,7 @@ struct Eval: Codable, Equatable {
 // MARK: - Move classification
 
 enum MoveClass: String, Codable, CaseIterable {
-    case brilliant, great, best, excellent, good, book, inaccuracy, mistake, blunder, forced
+    case brilliant, great, best, excellent, good, book, inaccuracy, mistake, miss, blunder, forced
 
     var label: String {
         switch self {
@@ -58,6 +66,7 @@ enum MoveClass: String, Codable, CaseIterable {
         case .book: return "Khai cuộc"
         case .inaccuracy: return "Thiếu chính xác"
         case .mistake: return "Sai lầm"
+        case .miss: return "Cơ hội bị bỏ lỡ"
         case .blunder: return "Sai lầm nghiêm trọng"
         case .forced: return "Bắt buộc"
         }
@@ -74,6 +83,7 @@ enum MoveClass: String, Codable, CaseIterable {
         case .book: return "là nước khai cuộc"
         case .inaccuracy: return "là nước đi thiếu chính xác"
         case .mistake: return "là một sai lầm"
+        case .miss: return "là một cơ hội bị bỏ lỡ"
         case .blunder: return "là sai lầm nghiêm trọng"
         case .forced: return "là nước đi bắt buộc"
         }
@@ -93,6 +103,7 @@ enum MoveClass: String, Codable, CaseIterable {
         case .book: return "B"
         case .inaccuracy: return "?!"
         case .mistake: return "?"
+        case .miss: return "✕"
         case .blunder: return "??"
         case .forced: return "→"
         }
@@ -108,6 +119,7 @@ enum MoveClass: String, Codable, CaseIterable {
         case .book: return Color(red: 0.66, green: 0.52, blue: 0.38)
         case .inaccuracy: return Color(red: 0.95, green: 0.75, blue: 0.15)
         case .mistake: return Color(red: 0.95, green: 0.55, blue: 0.15)
+        case .miss: return Color(red: 0.88, green: 0.42, blue: 0.36)
         case .blunder: return Color(red: 0.85, green: 0.20, blue: 0.20)
         case .forced: return Color.gray
         }
@@ -115,7 +127,7 @@ enum MoveClass: String, Codable, CaseIterable {
 
     /// Order used for the summary table.
     static let summaryOrder: [MoveClass] = [
-        .brilliant, .great, .best, .excellent, .good, .book, .inaccuracy, .mistake, .blunder
+        .brilliant, .great, .best, .excellent, .good, .book, .inaccuracy, .mistake, .miss, .blunder
     ]
 }
 
@@ -198,10 +210,22 @@ enum ReviewAnalyzer {
         var second: Eval?
     }
 
-    static func accuracy(forLoss loss: Double) -> Double {
-        let a = 103.1668 * exp(-0.04354 * loss) - 3.1669
+    /// Accuracy of one move from its expected points lost (0...1).
+    static func accuracy(forEPL epl: Double) -> Double {
+        let a = 103.1668 * exp(-4.0 * epl) - 3.1668
         return max(0, min(100, a))
     }
+
+    /// Comparisons on expected-points thresholds are inclusive, with a small tolerance
+    /// so floating-point noise cannot push a move into the next bucket.
+    private static func atMost(_ value: Double, _ limit: Double) -> Bool {
+        return value <= limit + 1e-6
+    }
+
+    /// Great has a branch that fires when a move throws away a big advantage. It is what
+    /// the reference classification specifies, but it labels the player's own blunder
+    /// "great", so it can be switched off here.
+    private static let greatIncludesLostAdvantage = true
 
     private static func combine(_ values: [Double]) -> Double {
         guard !values.isEmpty else { return 100 }
@@ -213,6 +237,7 @@ enum ReviewAnalyzer {
 
     static func analyze(record: GameRecord,
                         profile: EngineProfile,
+                        rating: Int = Eval.referenceRating,
                         progress: @escaping (Double) async -> Void) async throws -> GameReview {
         let replay = record.replay()
         let positions = replay.positions
@@ -249,25 +274,31 @@ enum ReviewAnalyzer {
             await progress(Double(i + 1) / Double(positions.count))
         }
 
-        // 2. Classify each move.
+        // 2. Classify each move with the Expected Points model:
+        //    Forced > Book > Brilliant > Great > Miss > threshold table.
         let ucis = moves.map { $0.uci }
         let bookPlies = Openings.bookPlies(for: ucis)
+        // Below 2000 any net material loss counts as a sacrifice; above it must cost 2+ pawns.
+        let sacrificeThreshold = rating < 2000 ? 1 : 2
         var reviews: [MoveReview] = []
         var whiteAcc: [Double] = []
         var blackAcc: [Double] = []
         var whiteCounts: [String: Int] = [:]
         var blackCounts: [String: Int] = [:]
+        // Expected points the opponent lost with their previous move (0 if it was forced or book).
+        var opponentLastLoss = 0.0
 
         for (i, move) in moves.enumerated() {
             let pos = positions[i]
             let mover = pos.turn
             let before = evals[i]
             let after = evals[i + 1]
-            let winBefore = before.eval.winPercent(for: mover)
-            let winAfter = after.eval.winPercent(for: mover)
+
+            // Phase A/B: win probabilities from the mover's side and expected points lost.
+            let pBefore = before.eval.winPercent(for: mover, rating: rating) / 100
+            var pAfter = after.eval.winPercent(for: mover, rating: rating) / 100
             let playedBest = before.best == move.uci
-            let loss = playedBest ? 0 : max(0, winBefore - winAfter)
-            let ep = loss / 100
+            var epl = playedBest ? 0.0 : max(0, pBefore - pAfter)
             let legalCount = pos.legalMoves().count
 
             var cls: MoveClass
@@ -276,42 +307,75 @@ enum ReviewAnalyzer {
             } else if i < bookPlies {
                 cls = .book
             } else {
-                if playedBest || ep <= 0.005 { cls = .best }
-                else if ep <= 0.02 { cls = .excellent }
-                else if ep <= 0.05 { cls = .good }
-                else if ep <= 0.10 { cls = .inaccuracy }
-                else if ep <= 0.20 { cls = .mistake }
-                else { cls = .blunder }
-
-                // A sacrifice that works is brilliant. The quick search may not see the point
-                // of a sacrifice yet, so a promising one gets a second, deeper look.
-                if loss <= 8, winBefore < 92, move.promotion == nil,
-                   sacrificeValue(pos: pos, move: move) >= 2 {
-                    var checkedLoss = loss
-                    var checkedAfter = winAfter
-                    if loss > 2 || winAfter < 45, positions[i + 1].status() == .ongoing {
-                        let deeper = await deeperWinPercent(after: positions[i + 1],
-                                                            for: mover,
-                                                            profile: profile)
+                // Tier 3: Brilliant needs all of: EPL <= 0.02, a real sacrifice, not losing
+                // afterwards (P >= 0.40) and not already winning (P < 0.90). The quick search may
+                // not see the point of a sacrifice yet, so a promising one gets a deeper look.
+                var brilliant = false
+                if pBefore < 0.90, move.promotion == nil, atMost(epl, 0.08),
+                   sacrificeValue(pos: pos, move: move) >= sacrificeThreshold {
+                    var checkedEPL = epl
+                    var checkedAfter = pAfter
+                    if !atMost(epl, 0.02) || pAfter < 0.40, positions[i + 1].status() == .ongoing {
+                        let deeper = await deeperWinPercent(after: positions[i + 1], for: mover,
+                                                            rating: rating, profile: profile)
                         try Task.checkCancellation()
                         if let d = deeper {
-                            checkedAfter = d
-                            checkedLoss = max(0, winBefore - d)
+                            checkedAfter = d / 100
+                            checkedEPL = playedBest ? 0 : max(0, pBefore - checkedAfter)
                         }
                     }
-                    if checkedLoss <= 2, checkedAfter >= 45 {
-                        cls = .brilliant
+                    if atMost(checkedEPL, 0.02), checkedAfter >= 0.40 {
+                        brilliant = true
+                        epl = checkedEPL
+                        pAfter = checkedAfter
                     }
                 }
 
-                if cls == .best, playedBest, let second = before.second,
-                   isGreat(pos: pos, move: move, previous: i > 0 ? moves[i - 1] : nil,
-                           winBefore: winBefore, secondWin: second.winPercent(for: mover)) {
+                // Tier 4: Great is any of: the only good move, turning the game around,
+                // or (optionally) a swing away from a big advantage.
+                var onlyGoodMove = false
+                if let second = before.second {
+                    let pSecond = second.winPercent(for: mover, rating: rating) / 100
+                    onlyGoodMove = pBefore - pSecond > 0.10
+                }
+                let great = (onlyGoodMove && atMost(epl, 0.02))
+                    || (pBefore < 0.50 && pAfter >= 0.70)
+                    || (greatIncludesLostAdvantage && pBefore >= 0.70 && pAfter < 0.50)
+
+                if brilliant {
+                    cls = .brilliant
+                } else if great {
                     cls = .great
+                } else if opponentLastLoss >= 0.20 && epl >= 0.10 - 1e-6 {
+                    // Tier 5: the opponent just blundered and this move did not take advantage.
+                    cls = .miss
+                } else if playedBest {
+                    // Phase D: best means the engine's own move; an equal-scoring alternative is excellent.
+                    cls = .best
+                } else if atMost(epl, 0.02) {
+                    cls = .excellent
+                } else if atMost(epl, 0.05) {
+                    cls = .good
+                } else if atMost(epl, 0.10) {
+                    cls = .inaccuracy
+                } else if atMost(epl, 0.20) {
+                    cls = .mistake
+                } else {
+                    cls = .blunder
                 }
             }
 
-            let acc = accuracy(forLoss: loss)
+            // Phase E: accuracy. Forced and book moves are 100 but left out of the average.
+            let acc: Double
+            switch cls {
+            case .forced, .book, .best, .brilliant, .great:
+                acc = 100
+            default:
+                acc = accuracy(forEPL: epl)
+            }
+            let countsTowardAverage = cls != .forced && cls != .book
+            opponentLastLoss = countsTowardAverage ? epl : 0
+
             var bestSAN: String? = nil
             if let b = before.best, let bm = pos.move(fromUCI: b) { bestSAN = pos.san(bm) }
 
@@ -319,16 +383,16 @@ enum ReviewAnalyzer {
                                       san: replay.sans[i],
                                       uci: move.uci,
                                       classification: cls,
-                                      lossPercent: loss,
+                                      lossPercent: epl * 100,
                                       accuracy: acc,
                                       bestUCI: before.best,
                                       bestSAN: bestSAN))
 
             if mover == .white {
-                whiteAcc.append(acc)
+                if countsTowardAverage { whiteAcc.append(acc) }
                 whiteCounts[cls.rawValue, default: 0] += 1
             } else {
-                blackAcc.append(acc)
+                if countsTowardAverage { blackAcc.append(acc) }
                 blackCounts[cls.rawValue, default: 0] += 1
             }
         }
@@ -374,6 +438,7 @@ enum ReviewAnalyzer {
     /// probability of `mover`, or nil if the engine gave no answer.
     private static func deeperWinPercent(after pos: Position,
                                          for mover: Side,
+                                         rating: Int,
                                          profile: EngineProfile) async -> Double? {
         let result = await StockfishEngine.shared.search(
             fen: pos.fen,
@@ -383,15 +448,6 @@ enum ReviewAnalyzer {
             strength: .full,
             profile: profile)
         guard let top = result?.lines.first else { return nil }
-        return Eval.fromWhitePOV(line: top, turn: pos.turn).winPercent(for: mover)
-    }
-
-    /// The only move that keeps the position, when the alternative is clearly worse.
-    private static func isGreat(pos: Position, move: Move, previous: Move?,
-                                winBefore: Double, secondWin: Double) -> Bool {
-        guard winBefore < 95, winBefore - secondWin >= 15 else { return false }
-        // Plain recaptures are not "great".
-        if let p = previous, p.to == move.to, pos.board[move.to] != nil { return false }
-        return true
+        return Eval.fromWhitePOV(line: top, turn: pos.turn).winPercent(for: mover, rating: rating)
     }
 }
