@@ -118,7 +118,7 @@ struct ReviewView: View {
                 navigation
 
                 if let review = vm.record.review {
-                    EvalGraph(evals: review.evals, index: vm.index) { vm.go(to: $0) }
+                    EvalGraph(evals: review.evals, index: vm.index)
                         .frame(height: 70)
                         .padding(.horizontal, 12)
                     summary(review)
@@ -354,7 +354,6 @@ struct EvalBar: View {
 struct EvalGraph: View {
     let evals: [Eval]
     let index: Int
-    let onSelect: (Int) -> Void
 
     var body: some View {
         GeometryReader { geo in
@@ -388,11 +387,8 @@ struct EvalGraph: View {
                     .offset(x: w * CGFloat(index) / CGFloat(n) - 1)
             }
             .cornerRadius(6)
-            .contentShape(Rectangle())
-            .gesture(DragGesture(minimumDistance: 0).onChanged { value in
-                let i = Int((value.location.x / max(1, w) * CGFloat(n)).rounded())
-                onSelect(max(0, min(evals.count - 1, i)))
-            })
+            // The graph is display-only: touches pass through it.
+            .allowsHitTesting(false)
         }
     }
 }
