@@ -43,6 +43,8 @@ jobs:
         continue-on-error: true
         env:
           GH_TOKEN: ${{ github.token }}
+          # Extra packages bots can import (iOS or pure-Python wheels), space separated.
+          PYTHON_PACKAGES: chess
         run: bash scripts/fetch_python.sh
 
       - name: Generate Xcode project

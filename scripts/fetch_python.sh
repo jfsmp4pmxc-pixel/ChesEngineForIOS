@@ -49,5 +49,34 @@ mkdir -p "$OUT"
 cp -R "$slice/Python.framework" "$OUT/Python.framework"
 cp -R "$slice/lib" "$OUT/lib"
 rm -rf "$WORK"
+
+# Optional third-party packages (iOS wheels, or pure-Python ones such as `chess`) go to
+# site-packages, which the app puts on sys.path. Set PYTHON_PACKAGES="chess numpy".
+# A failure only skips the packages; it never fails the build.
+if [ -n "${PYTHON_PACKAGES:-}" ]; then
+  pyver_dir="$(basename "$(find "$OUT/lib" -maxdepth 1 -type d -name 'python3*' | head -n1)")"
+  pyver="${pyver_dir#python}"
+  pytag="${pyver/./}"
+  site="$OUT/lib/$pyver_dir/site-packages"
+  wheels="$(mktemp -d)"
+  mkdir -p "$site"
+  echo "Downloading wheels: $PYTHON_PACKAGES (cp$pytag)"
+  # shellcheck disable=SC2086
+  if python3 -m pip download $PYTHON_PACKAGES -d "$wheels" \
+      --platform ios_13_0_arm64_iphoneos --platform any --python-version "$pyver" \
+      --implementation cp --abi "cp$pytag" --abi none --only-binary=:all: \
+      --extra-index-url https://pypi.anaconda.org/beeware/simple >/dev/null 2>&1; then
+    for w in "$wheels"/*.whl; do
+      [ -f "$w" ] || continue
+      echo "  + $(basename "$w")"
+      unzip -q -o "$w" -d "$site"
+    done
+    find "$site" -type d \( -name tests -o -name test -o -name __pycache__ \) -prune -exec rm -rf {} + 2>/dev/null || true
+  else
+    echo "WARNING: could not download wheels for: $PYTHON_PACKAGES (continuing without them)" >&2
+  fi
+  rm -rf "$wheels"
+fi
+
 echo "Python runtime ready in $OUT"
 du -sh "$OUT"

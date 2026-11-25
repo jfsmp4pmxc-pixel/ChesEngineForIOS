@@ -82,6 +82,43 @@ PLIST
       echo "python/lib/$VER_DIR/lib-dynload/${file%.so}.fwork" > "$fw/$module.origin"
     done < <(find "$DYNLOAD" -name '*.so')
   fi
+
+  # Extension modules of third-party packages (site-packages) get the same treatment.
+  # Their framework is named after the full dotted module path, e.g.
+  # numpy/core/_x.cpython-313-iphoneos.so -> numpy.core._x.framework
+  SITE="$STDLIB/site-packages"
+  if [ -d "$SITE" ]; then
+    while IFS= read -r so; do
+      rel="${so#$SITE/}"
+      stem="${rel%%.cpython-*}"
+      [ "$stem" = "$rel" ] && stem="${rel%.so}"
+      module="$(echo "$stem" | tr '/' '.')"
+      fw="$BUNDLE/Frameworks/$module.framework"
+      mkdir -p "$fw"
+      id_suffix="$(echo "$module" | tr '_.' '--')"
+      cat > "$fw/Info.plist" <<PLIST
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+  <key>CFBundleDevelopmentRegion</key><string>en</string>
+  <key>CFBundleExecutable</key><string>$module</string>
+  <key>CFBundleIdentifier</key><string>$BUNDLE_ID.$id_suffix</string>
+  <key>CFBundleInfoDictionaryVersion</key><string>6.0</string>
+  <key>CFBundleName</key><string>$module</string>
+  <key>CFBundlePackageType</key><string>FMWK</string>
+  <key>CFBundleShortVersionString</key><string>1.0</string>
+  <key>CFBundleVersion</key><string>1</string>
+  <key>MinimumOSVersion</key><string>15.0</string>
+</dict>
+</plist>
+PLIST
+      fwork="${so%.so}.fwork"
+      mv "$so" "$fw/$module"
+      echo "Frameworks/$module.framework/$module" > "$fwork"
+      echo "python/lib/$VER_DIR/site-packages/${fwork#$SITE/}" > "$fw/$module.origin"
+    done < <(find "$SITE" -name '*.so')
+  fi
   fi
 else
   echo "No Python runtime in build/python: building the IPA without it."

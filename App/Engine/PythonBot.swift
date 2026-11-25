@@ -82,6 +82,15 @@ final class PythonRuntime {
     private static let helperSource = #"""
 import json, os, sys, traceback, importlib.util
 _catnip_cache = {}
+_catnip_base = set(sys.modules)
+def _catnip_purge(folder):
+    # Forget helper modules a previous version of the bot imported from its own folder,
+    # so editing a helper file takes effect (the standard library stays cached).
+    prefix = folder + os.sep
+    for name in [n for n in sys.modules if n not in _catnip_base]:
+        f = getattr(sys.modules[name], "__file__", None)
+        if f and f.startswith(prefix):
+            del sys.modules[name]
 def _catnip_call(req_path):
     out_path = req_path + ".out"
     try:
@@ -93,8 +102,10 @@ def _catnip_call(req_path):
         entry = _catnip_cache.get(path)
         if entry is None or entry[0] != mtime:
             folder = os.path.dirname(path)
-            if folder and folder not in sys.path:
-                sys.path.insert(0, folder)
+            if folder:
+                _catnip_purge(folder)
+                if folder not in sys.path:
+                    sys.path.insert(0, folder)
             spec = importlib.util.spec_from_file_location("catnip_bot_%d" % (abs(hash(path)) % 10**8), path)
             mod = importlib.util.module_from_spec(spec)
             spec.loader.exec_module(mod)
@@ -128,9 +139,17 @@ def _catnip_call(req_path):
         }
         let stdlib = libDir + "/" + version
         setenv("PYTHONHOME", pythonHome, 1)
-        setenv("PYTHONPATH", stdlib + ":" + stdlib + "/lib-dynload", 1)
+        // Search order (same idea as Catnip's PyConfig.module_search_paths): standard
+        // library, extension modules, packages bundled in the IPA, then packages the
+        // player drops into Documents/Python/site-packages (pure-Python libraries).
+        let userPackages = Paths.documents.path + "/Python/site-packages"
+        try? FileManager.default.createDirectory(atPath: userPackages, withIntermediateDirectories: true)
+        let searchPath = [stdlib, stdlib + "/lib-dynload", stdlib + "/site-packages", userPackages]
+        setenv("PYTHONPATH", searchPath.joined(separator: ":"), 1)
         setenv("PYTHONDONTWRITEBYTECODE", "1", 1)
         setenv("PYTHONUTF8", "1", 1)
+        setenv("PYTHONIOENCODING", "utf-8", 1)
+        setenv("PYTHONUNBUFFERED", "1", 1)
         setenv("PYTHONNOUSERSITE", "1", 1)
 
         guard let handle = dlopen(frameworkBinary, RTLD_NOW | RTLD_GLOBAL) else {

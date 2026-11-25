@@ -43,11 +43,11 @@ Tạo file `.py` có hàm `get_move(fen)` trả về nước đi dạng UCI (`e2
 import random
 
 def get_move(fen):
-    # Viết logic của bạn ở đây (chỉ dùng thư viện chuẩn của Python)
+    # Viết logic của bạn ở đây (thư viện chuẩn hoặc `chess`)
     return "e2e4"
 ```
 
-Nhập file ở tab **Bots**, bấm **Test** để thử, rồi chọn *Python bot* khi tạo ván mới. iOS không cho chạy tiến trình con nên Python được nhúng trực tiếp vào app (CPython 3.13 từ [beeware/Python-Apple-support](https://github.com/beeware/Python-Apple-support)); không có pip, chỉ dùng được thư viện chuẩn. Một bot chạy vô hạn sẽ làm treo hàng đợi Python cho đến khi nó trả về.
+Nhập file ở tab **Bots**, bấm **Test** để thử, rồi chọn *Python bot* khi tạo ván mới. iOS không cho chạy tiến trình con nên Python được nhúng trực tiếp vào app (CPython 3.13 từ [beeware/Python-Apple-support](https://github.com/beeware/Python-Apple-support)). Ngoài thư viện chuẩn, bản dựng kèm sẵn gói `chess` (python-chess): `import chess`. Muốn thêm thư viện thuần Python, chép thư mục của nó vào `Documents/Python/site-packages` (mở bằng app Tệp); khi tự build, đặt biến `PYTHON_PACKAGES` (cách nhau bằng dấu cách) ở bước *Fetch Python runtime* của workflow. Các module `.so` của gói bên thứ ba cũng được đóng thành framework. Một bot chạy vô hạn sẽ làm treo hàng đợi Python cho đến khi nó trả về.
 
 ## Build file .ipa không ký bằng GitHub Actions
 
