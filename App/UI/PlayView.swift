@@ -16,8 +16,25 @@ enum ColorChoice: String, CaseIterable, Identifiable {
     var id: String { rawValue }
 }
 
+/// Verdict on a move played in the current game (live analysis).
+struct LiveMove {
+    var classification: MoveClass
+    var san: String
+    var bestSAN: String?
+}
+
 final class PlayViewModel: ObservableObject {
-    @Published var session = GameSession()
+    /// Arrows drawn by the player are cleared whenever a move is played or taken back.
+    @Published var session = GameSession() {
+        didSet {
+            if oldValue.moves.count != session.moves.count { userArrows = [] }
+        }
+    }
+    @Published var arrowMode = false
+    @Published var userArrows: [BoardArrow] = []
+    /// Live verdicts by move index, and moves whose analysis failed.
+    @Published var live: [Int: LiveMove] = [:]
+    @Published var liveFailed: Set<Int> = []
     @Published var selected: Int? = nil
     @Published var flipped = false
     @Published var thinking = false
@@ -39,8 +56,115 @@ final class PlayViewModel: ObservableObject {
     private var activeBot: PythonBotFile? = nil
     private var store: GameStore? = nil
 
+    // Live analysis bookkeeping
+    private var liveEvals: [Int: PositionEval] = [:]
+    private var liveLosses: [Int: Double] = [:]
+    private var liveGeneration = UUID()
+    private var liveTail: Task<Void, Never>? = nil
+
     func attach(store: GameStore) {
         self.store = store
+    }
+
+    func drawArrow(_ arrow: BoardArrow) {
+        userArrows.toggle(arrow)
+    }
+
+    // MARK: Live analysis
+
+    private func moverIsOpponent(ply: Int) -> Bool {
+        return opponent != .human && session.positions[ply].turn != humanSide
+    }
+
+    /// Verdict on the last move, unless it is the opponent's and those are hidden.
+    func liveInfo(showOpponent: Bool) -> LiveMove? {
+        let ply = session.moves.count - 1
+        guard ply >= 0, let info = live[ply] else { return nil }
+        if moverIsOpponent(ply: ply) && !showOpponent { return nil }
+        return info
+    }
+
+    func livePending(showOpponent: Bool) -> Bool {
+        let ply = session.moves.count - 1
+        guard ply >= 0, live[ply] == nil, !liveFailed.contains(ply) else { return false }
+        return !(moverIsOpponent(ply: ply) && !showOpponent)
+    }
+
+    private func resetLive() {
+        liveGeneration = UUID()
+        liveTail = nil
+        live = [:]
+        liveFailed = []
+        liveEvals = [:]
+        liveLosses = [:]
+    }
+
+    /// After taking moves back: keep the verdicts that are still valid, drop the rest.
+    private func truncateLive(toMoves n: Int) {
+        liveGeneration = UUID()
+        liveTail = nil
+        live = live.filter { $0.key < n }
+        liveFailed = liveFailed.filter { $0 < n }
+        liveEvals = liveEvals.filter { $0.key <= n }
+        liveLosses = liveLosses.filter { $0.key < n }
+    }
+
+    /// Queues the analysis of the move just played. Moves are analysed one after another.
+    private func scheduleLiveAnalysis() {
+        guard Prefs.liveAnalysis else { return }
+        let ply = session.moves.count - 1
+        guard ply >= 0 else { return }
+        let positions = session.positions
+        let moves = session.moves
+        let sans = session.sans
+        let gen = liveGeneration
+        let previous = liveTail
+        let profile = Prefs.profile
+        let rating = Prefs.rating
+
+        liveTail = Task { @MainActor in
+            _ = await previous?.value
+            guard gen == self.liveGeneration else { return }
+            await self.analyseLive(ply: ply, positions: positions, moves: moves, sans: sans,
+                                   generation: gen, profile: profile, rating: rating)
+        }
+    }
+
+    @MainActor
+    private func analyseLive(ply: Int, positions: [Position], moves: [Move], sans: [String],
+                             generation gen: UUID, profile: EngineProfile, rating: Int) async {
+        do {
+            let before: PositionEval
+            if let cached = liveEvals[ply] {
+                before = cached
+            } else {
+                before = try await ReviewAnalyzer.evaluate(positions[ply], profile: profile)
+                guard gen == liveGeneration else { return }
+                liveEvals[ply] = before
+            }
+            let after = try await ReviewAnalyzer.evaluate(positions[ply + 1], profile: profile)
+            guard gen == liveGeneration else { return }
+            liveEvals[ply + 1] = after
+
+            let ucis = moves.prefix(ply + 1).map { $0.uci }
+            let isBook = Openings.bookPlies(for: Array(ucis)) > ply
+            let result = try await ReviewAnalyzer.classify(position: positions[ply],
+                                                           move: moves[ply],
+                                                           next: positions[ply + 1],
+                                                           before: before,
+                                                           after: after,
+                                                           isBook: isBook,
+                                                           opponentLastLoss: liveLosses[ply - 1] ?? 0,
+                                                           rating: rating,
+                                                           profile: profile)
+            guard gen == liveGeneration else { return }
+            liveLosses[ply] = result.countsTowardAverage ? result.epl : 0
+            live[ply] = LiveMove(classification: result.classification,
+                                 san: sans[ply],
+                                 bestSAN: result.bestSAN)
+        } catch {
+            if gen == liveGeneration { liveFailed.insert(ply) }
+        }
     }
 
     var level: PlayLevel {
@@ -131,6 +255,8 @@ final class PlayViewModel: ObservableObject {
         selected = nil
         pendingPromotion = nil
         premoves = []
+        resetLive()
+        userArrows = []
         session = GameSession()
         recordID = UUID()
         started = Date()
@@ -233,11 +359,13 @@ final class PlayViewModel: ObservableObject {
     }
 
     private func afterMove() {
+        // The opponent's search is queued first so live analysis never delays its reply.
         if session.isOver {
             persist()
         } else {
             requestOpponentMove()
         }
+        scheduleLiveAnalysis()
     }
 
     func undo() {
@@ -251,6 +379,7 @@ final class PlayViewModel: ObservableObject {
             plies = session.position.turn == humanSide ? 2 : 1
         }
         session.undo(plies: plies)
+        truncateLive(toMoves: session.moves.count)
         selected = nil
         message = nil
         requestOpponentMove()
@@ -373,11 +502,17 @@ struct PlayView: View {
     @StateObject private var vm = PlayViewModel()
     @State private var showSetup = false
     @State private var confirmResign = false
+    @AppStorage(Prefs.liveKey) private var liveOn = false
+    @AppStorage(Prefs.liveOpponentKey) private var liveOpponent = true
 
     var body: some View {
         NavigationView {
             ScrollView {
                 VStack(spacing: 10) {
+                    ArrowModeBar(isOn: $vm.arrowMode,
+                                 count: vm.userArrows.count,
+                                 onClear: { vm.userArrows = [] })
+
                     playerLabel(top: true)
 
                     BoardView(position: vm.session.position,
@@ -385,10 +520,14 @@ struct PlayView: View {
                               lastMove: vm.session.lastMove,
                               selected: vm.selected,
                               legalTargets: vm.legalTargets,
+                              badge: liveOn ? vm.liveInfo(showOpponent: liveOpponent)?.classification : nil,
                               premoves: vm.premoves,
                               ghosts: vm.premoveGhosts.ghosts,
                               dimmed: vm.premoveGhosts.dimmed,
-                              onTap: { vm.tap($0) })
+                              onTap: { vm.tap($0) },
+                              drawingMode: vm.arrowMode,
+                              userArrows: vm.userArrows,
+                              onArrow: { vm.drawArrow($0) })
                         .padding(.horizontal, 8)
 
                     playerLabel(top: false)
@@ -396,6 +535,8 @@ struct PlayView: View {
                     Text(vm.statusText)
                         .font(.headline)
                         .multilineTextAlignment(.center)
+
+                    liveLine
 
                     if let msg = vm.message {
                         Text(msg)
@@ -447,6 +588,36 @@ struct PlayView: View {
         .navigationViewStyle(.stack)
         .onAppear {
             vm.attach(store: store)
+        }
+    }
+
+    /// Verdict on the move that was just played (live analysis).
+    @ViewBuilder
+    private var liveLine: some View {
+        if liveOn, !vm.session.moves.isEmpty {
+            if let info = vm.liveInfo(showOpponent: liveOpponent) {
+                VStack(spacing: 2) {
+                    HStack(spacing: 6) {
+                        ClassIcon(cls: info.classification)
+                            .frame(width: 20, height: 20)
+                        Text("\(info.san) \(info.classification.phrase)")
+                            .font(.subheadline.weight(.semibold))
+                    }
+                    if let best = info.bestSAN,
+                       [.good, .excellent, .inaccuracy, .mistake, .miss, .blunder].contains(info.classification) {
+                        Text("Tốt nhất là \(best)")
+                            .font(.footnote)
+                            .foregroundColor(.secondary)
+                    }
+                }
+            } else if vm.livePending(showOpponent: liveOpponent) {
+                HStack(spacing: 6) {
+                    ProgressView()
+                    Text("Đang đánh giá nước đi…")
+                        .font(.footnote)
+                        .foregroundColor(.secondary)
+                }
+            }
         }
     }
 

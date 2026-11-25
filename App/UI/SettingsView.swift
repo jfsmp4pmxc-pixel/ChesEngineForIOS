@@ -4,6 +4,8 @@ struct SettingsView: View {
     @AppStorage(Prefs.profileKey) private var profileRaw = EngineProfile.lite.rawValue
     @AppStorage(Prefs.animateKey) private var animate = true
     @AppStorage(Prefs.ratingKey) private var rating = Prefs.defaultRating
+    @AppStorage(Prefs.liveKey) private var live = false
+    @AppStorage(Prefs.liveOpponentKey) private var liveOpponent = true
     @State private var status: String? = nil
     @State private var checking = false
 
@@ -29,6 +31,13 @@ struct SettingsView: View {
                             Text("\(rating)").foregroundColor(.secondary).monospacedDigit()
                         }
                     }
+                }
+
+                Section(header: Text("Phân tích trực tiếp"),
+                        footer: Text("Mỗi nước vừa đi sẽ được Stockfish đánh giá và gắn nhãn ngay khi đang chơi (Tuyệt vời, Sai lầm…). Dùng nhiều pin và CPU hơn, và nước phản hồi của máy có thể chậm đi một chút.")) {
+                    Toggle("Phân tích nước đi trực tiếp", isOn: $live)
+                    Toggle("Cả nước đi của đối thủ", isOn: $liveOpponent)
+                        .disabled(!live)
                 }
 
                 Section(header: Text("Bàn cờ")) {

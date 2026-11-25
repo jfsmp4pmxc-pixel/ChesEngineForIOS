@@ -2,8 +2,14 @@ import SwiftUI
 
 final class ReviewViewModel: ObservableObject {
     @Published var record: GameRecord
-    @Published var index: Int
+    @Published var index: Int {
+        didSet {
+            if index != oldValue { userArrows = [] }
+        }
+    }
     @Published var flipped = false
+    @Published var arrowMode = false
+    @Published var userArrows: [BoardArrow] = []
     @Published var progress: Double = 0
     @Published var analyzing = false
     @Published var error: String? = nil
@@ -94,11 +100,18 @@ struct ReviewView: View {
                         .padding(.horizontal, 8)
                 }
 
+                ArrowModeBar(isOn: $vm.arrowMode,
+                             count: vm.userArrows.count,
+                             onClear: { vm.userArrows = [] })
+
                 BoardView(position: vm.position,
                           flipped: vm.flipped,
                           lastMove: vm.lastMove,
                           arrow: vm.bestArrow,
-                          badge: vm.currentReview?.classification)
+                          badge: vm.currentReview?.classification,
+                          drawingMode: vm.arrowMode,
+                          userArrows: vm.userArrows,
+                          onArrow: { vm.userArrows.toggle($0) })
                     .padding(.horizontal, 8)
 
                 moveInfo

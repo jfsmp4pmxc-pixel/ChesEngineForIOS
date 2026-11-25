@@ -35,6 +35,57 @@ struct ArrowShape: Shape {
     }
 }
 
+/// An arrow the player drew on the board (any square to any square).
+struct BoardArrow: Hashable {
+    var from: Int
+    var to: Int
+}
+
+extension Array where Element == BoardArrow {
+    /// Adds the arrow, or removes it if the same arrow is already there.
+    mutating func toggle(_ arrow: BoardArrow) {
+        if let i = firstIndex(of: arrow) {
+            remove(at: i)
+        } else {
+            append(arrow)
+        }
+    }
+}
+
+/// Switch that turns arrow drawing on or off, shown above a board.
+struct ArrowModeBar: View {
+    @Binding var isOn: Bool
+    let count: Int
+    let onClear: () -> Void
+
+    var body: some View {
+        VStack(spacing: 4) {
+            HStack(spacing: 12) {
+                Toggle(isOn: $isOn) {
+                    Label("Vẽ mũi tên", systemImage: "arrow.up.right")
+                }
+                .toggleStyle(.button)
+
+                if count > 0 {
+                    Button(action: onClear) {
+                        Label("Xóa mũi tên", systemImage: "trash")
+                    }
+                    .buttonStyle(.bordered)
+                }
+                Spacer()
+            }
+            if isOn {
+                Text("Kéo từ ô này sang ô khác, hoặc chạm hai ô liên tiếp. Vẽ lại cùng mũi tên để xóa nó.")
+                    .font(.caption)
+                    .foregroundColor(.secondary)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+            }
+        }
+        .font(.subheadline)
+        .padding(.horizontal, 16)
+    }
+}
+
 /// A piece that is sliding from one square to another.
 private struct Slide: Identifiable {
     let id = UUID()
@@ -81,8 +132,13 @@ struct BoardView: View {
     /// Squares whose real piece is drawn faintly because a premove moves or takes it.
     var dimmed: Set<Int> = []
     var onTap: ((Int) -> Void)? = nil
+    /// While drawing, taps and drags make arrows instead of moving pieces.
+    var drawingMode: Bool = false
+    var userArrows: [BoardArrow] = []
+    var onArrow: ((BoardArrow) -> Void)? = nil
 
     @AppStorage(Prefs.animateKey) private var animate = true
+    @State private var pendingArrowStart: Int? = nil
 
     /// The position that is currently drawn. It follows `position` one step later so a
     /// move can be animated from the old squares to the new ones.
@@ -104,7 +160,10 @@ struct BoardView: View {
          premoves: [Move] = [],
          ghosts: [Int: Piece] = [:],
          dimmed: Set<Int> = [],
-         onTap: ((Int) -> Void)? = nil) {
+         onTap: ((Int) -> Void)? = nil,
+         drawingMode: Bool = false,
+         userArrows: [BoardArrow] = [],
+         onArrow: ((BoardArrow) -> Void)? = nil) {
         self.position = position
         self.flipped = flipped
         self.lastMove = lastMove
@@ -116,6 +175,9 @@ struct BoardView: View {
         self.ghosts = ghosts
         self.dimmed = dimmed
         self.onTap = onTap
+        self.drawingMode = drawingMode
+        self.userArrows = userArrows
+        self.onArrow = onArrow
         _shown = State(initialValue: position)
         _shownMove = State(initialValue: lastMove)
     }
@@ -152,6 +214,13 @@ struct BoardView: View {
                         }
                     }
                 }
+                ForEach(userArrows, id: \.self) { a in
+                    ArrowShape(from: center(of: a.from, cell: cell),
+                               to: center(of: a.to, cell: cell),
+                               width: cell * 0.16)
+                        .fill(Color(red: 0.15, green: 0.65, blue: 0.30).opacity(0.78))
+                        .allowsHitTesting(false)
+                }
                 if let a = arrow {
                     ArrowShape(from: center(of: a.from, cell: cell),
                                to: center(of: a.to, cell: cell),
@@ -171,6 +240,19 @@ struct BoardView: View {
                         .position(x: b.x, y: b.y)
                         .allowsHitTesting(false)
                 }
+                if drawingMode {
+                    // Sits above the squares so taps and drags draw instead of moving pieces.
+                    Color.clear
+                        .contentShape(Rectangle())
+                        .gesture(
+                            DragGesture(minimumDistance: 0)
+                                .onEnded { value in
+                                    let a = squareAt(value.startLocation, cell: cell)
+                                    let b = squareAt(value.location, cell: cell)
+                                    arrowGesture(from: a, to: b)
+                                }
+                        )
+                }
                 if let b = badge, let lm = lastMove {
                     let d = cell * 0.46
                     let c = center(of: lm.to, cell: cell)
@@ -187,6 +269,33 @@ struct BoardView: View {
         .aspectRatio(1, contentMode: .fit)
         .onChange(of: position) { newPosition in
             positionChanged(to: newPosition)
+        }
+        .onChange(of: drawingMode) { _ in
+            pendingArrowStart = nil
+        }
+    }
+
+    // MARK: Arrow drawing
+
+    private func squareAt(_ point: CGPoint, cell: CGFloat) -> Int {
+        let col = min(7, max(0, Int(point.x / cell)))
+        let row = min(7, max(0, Int(point.y / cell)))
+        return square(row: row, col: col)
+    }
+
+    /// A drag draws an arrow at once. Two taps do too: the first picks the start square,
+    /// the second (on another square) the end.
+    private func arrowGesture(from a: Int, to b: Int) {
+        if a != b {
+            pendingArrowStart = nil
+            onArrow?(BoardArrow(from: a, to: b))
+            return
+        }
+        if let start = pendingArrowStart {
+            if start != a { onArrow?(BoardArrow(from: start, to: a)) }
+            pendingArrowStart = nil
+        } else {
+            pendingArrowStart = a
         }
     }
 
@@ -270,6 +379,9 @@ struct BoardView: View {
             }
             if selected == sq {
                 Rectangle().fill(Color.blue.opacity(0.35))
+            }
+            if pendingArrowStart == sq {
+                Rectangle().fill(Color.green.opacity(0.45))
             }
             if checkSquare == sq {
                 Rectangle().fill(Color.red.opacity(0.55))

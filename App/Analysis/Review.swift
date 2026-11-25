@@ -203,13 +203,25 @@ extension Position {
 
 // MARK: - Analyzer
 
-enum ReviewAnalyzer {
-    private struct PositionEval {
-        var eval: Eval
-        var best: String?
-        var second: Eval?
-    }
+/// Engine verdict on one position, from White's point of view.
+struct PositionEval {
+    var eval: Eval
+    var best: String?      // engine's best move (UCI)
+    var second: Eval?      // score of the second-best line
+}
 
+/// Result of classifying one move.
+struct ClassifiedMove {
+    var classification: MoveClass
+    var epl: Double                 // expected points lost, 0...1
+    var accuracy: Double            // 0...100
+    var bestUCI: String?
+    var bestSAN: String?
+    /// False for forced and book moves, which are left out of the accuracy average.
+    var countsTowardAverage: Bool
+}
+
+enum ReviewAnalyzer {
     /// Accuracy of one move from its expected points lost (0...1).
     static func accuracy(forEPL epl: Double) -> Double {
         let a = 103.1668 * exp(-4.0 * epl) - 3.1668
@@ -235,6 +247,8 @@ enum ReviewAnalyzer {
         return (mean + harmonic) / 2
     }
 
+    // MARK: Whole game
+
     static func analyze(record: GameRecord,
                         profile: EngineProfile,
                         rating: Int = Eval.referenceRating,
@@ -248,38 +262,13 @@ enum ReviewAnalyzer {
         var evals: [PositionEval] = []
         for (i, pos) in positions.enumerated() {
             try Task.checkCancellation()
-            switch pos.status() {
-            case .checkmate:
-                let cp = pos.turn == .white ? -10000 : 10000
-                evals.append(PositionEval(eval: Eval(cp: cp, mate: nil), best: nil, second: nil))
-            case .stalemate, .insufficientMaterial, .fiftyMoveRule:
-                evals.append(PositionEval(eval: .draw, best: nil, second: nil))
-            case .ongoing:
-                let result = await StockfishEngine.shared.search(
-                    fen: pos.fen,
-                    depth: profile.analysisDepth,
-                    movetimeMs: profile.analysisMaxMillis,
-                    multiPV: 2,
-                    strength: .full,
-                    profile: profile)
-                try Task.checkCancellation()
-                guard let r = result, let top = r.lines.first else {
-                    throw AnalysisError(message: StockfishEngine.shared.startupError
-                                        ?? "Stockfish không trả về đánh giá nào.")
-                }
-                let e = Eval.fromWhitePOV(line: top, turn: pos.turn)
-                let s = r.lines.count > 1 ? Eval.fromWhitePOV(line: r.lines[1], turn: pos.turn) : nil
-                evals.append(PositionEval(eval: e, best: r.bestMove ?? top.pv.first, second: s))
-            }
+            evals.append(try await evaluate(pos, profile: profile))
             await progress(Double(i + 1) / Double(positions.count))
         }
 
-        // 2. Classify each move with the Expected Points model:
-        //    Forced > Book > Brilliant > Great > Miss > threshold table.
+        // 2. Classify each move.
         let ucis = moves.map { $0.uci }
         let bookPlies = Openings.bookPlies(for: ucis)
-        // Below 2000 any net material loss counts as a sacrifice; above it must cost 2+ pawns.
-        let sacrificeThreshold = rating < 2000 ? 1 : 2
         var reviews: [MoveReview] = []
         var whiteAcc: [Double] = []
         var blackAcc: [Double] = []
@@ -289,111 +278,32 @@ enum ReviewAnalyzer {
         var opponentLastLoss = 0.0
 
         for (i, move) in moves.enumerated() {
-            let pos = positions[i]
-            let mover = pos.turn
-            let before = evals[i]
-            let after = evals[i + 1]
-
-            // Phase A/B: win probabilities from the mover's side and expected points lost.
-            let pBefore = before.eval.winPercent(for: mover, rating: rating) / 100
-            var pAfter = after.eval.winPercent(for: mover, rating: rating) / 100
-            let playedBest = before.best == move.uci
-            var epl = playedBest ? 0.0 : max(0, pBefore - pAfter)
-            let legalCount = pos.legalMoves().count
-
-            var cls: MoveClass
-            if legalCount == 1 {
-                cls = .forced
-            } else if i < bookPlies {
-                cls = .book
-            } else {
-                // Tier 3: Brilliant needs all of: EPL <= 0.02, a real sacrifice, not losing
-                // afterwards (P >= 0.40) and not already winning (P < 0.90). The quick search may
-                // not see the point of a sacrifice yet, so a promising one gets a deeper look.
-                var brilliant = false
-                if pBefore < 0.90, move.promotion == nil, atMost(epl, 0.08),
-                   sacrificeValue(pos: pos, move: move) >= sacrificeThreshold {
-                    var checkedEPL = epl
-                    var checkedAfter = pAfter
-                    if !atMost(epl, 0.02) || pAfter < 0.40, positions[i + 1].status() == .ongoing {
-                        let deeper = await deeperWinPercent(after: positions[i + 1], for: mover,
-                                                            rating: rating, profile: profile)
-                        try Task.checkCancellation()
-                        if let d = deeper {
-                            checkedAfter = d / 100
-                            checkedEPL = playedBest ? 0 : max(0, pBefore - checkedAfter)
-                        }
-                    }
-                    if atMost(checkedEPL, 0.02), checkedAfter >= 0.40 {
-                        brilliant = true
-                        epl = checkedEPL
-                        pAfter = checkedAfter
-                    }
-                }
-
-                // Tier 4: Great is any of: the only good move, turning the game around,
-                // or (optionally) a swing away from a big advantage.
-                var onlyGoodMove = false
-                if let second = before.second {
-                    let pSecond = second.winPercent(for: mover, rating: rating) / 100
-                    onlyGoodMove = pBefore - pSecond > 0.10
-                }
-                let great = (onlyGoodMove && atMost(epl, 0.02))
-                    || (pBefore < 0.50 && pAfter >= 0.70)
-                    || (greatIncludesLostAdvantage && pBefore >= 0.70 && pAfter < 0.50)
-
-                if brilliant {
-                    cls = .brilliant
-                } else if great {
-                    cls = .great
-                } else if opponentLastLoss >= 0.20 && epl >= 0.10 - 1e-6 {
-                    // Tier 5: the opponent just blundered and this move did not take advantage.
-                    cls = .miss
-                } else if playedBest {
-                    // Phase D: best means the engine's own move; an equal-scoring alternative is excellent.
-                    cls = .best
-                } else if atMost(epl, 0.02) {
-                    cls = .excellent
-                } else if atMost(epl, 0.05) {
-                    cls = .good
-                } else if atMost(epl, 0.10) {
-                    cls = .inaccuracy
-                } else if atMost(epl, 0.20) {
-                    cls = .mistake
-                } else {
-                    cls = .blunder
-                }
-            }
-
-            // Phase E: accuracy. Forced and book moves are 100 but left out of the average.
-            let acc: Double
-            switch cls {
-            case .forced, .book, .best, .brilliant, .great:
-                acc = 100
-            default:
-                acc = accuracy(forEPL: epl)
-            }
-            let countsTowardAverage = cls != .forced && cls != .book
-            opponentLastLoss = countsTowardAverage ? epl : 0
-
-            var bestSAN: String? = nil
-            if let b = before.best, let bm = pos.move(fromUCI: b) { bestSAN = pos.san(bm) }
+            let c = try await classify(position: positions[i],
+                                       move: move,
+                                       next: positions[i + 1],
+                                       before: evals[i],
+                                       after: evals[i + 1],
+                                       isBook: i < bookPlies,
+                                       opponentLastLoss: opponentLastLoss,
+                                       rating: rating,
+                                       profile: profile)
+            opponentLastLoss = c.countsTowardAverage ? c.epl : 0
 
             reviews.append(MoveReview(ply: i,
                                       san: replay.sans[i],
                                       uci: move.uci,
-                                      classification: cls,
-                                      lossPercent: epl * 100,
-                                      accuracy: acc,
-                                      bestUCI: before.best,
-                                      bestSAN: bestSAN))
+                                      classification: c.classification,
+                                      lossPercent: c.epl * 100,
+                                      accuracy: c.accuracy,
+                                      bestUCI: c.bestUCI,
+                                      bestSAN: c.bestSAN))
 
-            if mover == .white {
-                if countsTowardAverage { whiteAcc.append(acc) }
-                whiteCounts[cls.rawValue, default: 0] += 1
+            if positions[i].turn == .white {
+                if c.countsTowardAverage { whiteAcc.append(c.accuracy) }
+                whiteCounts[c.classification.rawValue, default: 0] += 1
             } else {
-                if countsTowardAverage { blackAcc.append(acc) }
-                blackCounts[cls.rawValue, default: 0] += 1
+                if c.countsTowardAverage { blackAcc.append(c.accuracy) }
+                blackCounts[c.classification.rawValue, default: 0] += 1
             }
         }
 
@@ -407,6 +317,144 @@ enum ReviewAnalyzer {
                           engine: "\(StockfishEngine.versionName) (\(profile.title))",
                           depth: profile.analysisDepth,
                           generatedAt: Date())
+    }
+
+    // MARK: One position
+
+    /// Asks the engine about a position (two lines, so the second-best move is known).
+    /// Finished games are scored without the engine.
+    static func evaluate(_ pos: Position, profile: EngineProfile) async throws -> PositionEval {
+        switch pos.status() {
+        case .checkmate:
+            let cp = pos.turn == .white ? -10000 : 10000
+            return PositionEval(eval: Eval(cp: cp, mate: nil), best: nil, second: nil)
+        case .stalemate, .insufficientMaterial, .fiftyMoveRule:
+            return PositionEval(eval: .draw, best: nil, second: nil)
+        case .ongoing:
+            let result = await StockfishEngine.shared.search(
+                fen: pos.fen,
+                depth: profile.analysisDepth,
+                movetimeMs: profile.analysisMaxMillis,
+                multiPV: 2,
+                strength: .full,
+                profile: profile)
+            try Task.checkCancellation()
+            guard let r = result, let top = r.lines.first else {
+                throw AnalysisError(message: StockfishEngine.shared.startupError
+                                    ?? "Stockfish không trả về đánh giá nào.")
+            }
+            let e = Eval.fromWhitePOV(line: top, turn: pos.turn)
+            let s = r.lines.count > 1 ? Eval.fromWhitePOV(line: r.lines[1], turn: pos.turn) : nil
+            return PositionEval(eval: e, best: r.bestMove ?? top.pv.first, second: s)
+        }
+    }
+
+    /// Classifies one move with the Expected Points model:
+    /// Forced > Book > Brilliant > Great > Miss > threshold table.
+    /// `opponentLastLoss` is the expected points the opponent lost with their previous move
+    /// (0 when it was forced or book).
+    static func classify(position pos: Position,
+                         move: Move,
+                         next: Position,
+                         before: PositionEval,
+                         after: PositionEval,
+                         isBook: Bool,
+                         opponentLastLoss: Double,
+                         rating: Int,
+                         profile: EngineProfile) async throws -> ClassifiedMove {
+        let mover = pos.turn
+        // Below 2000 any net material loss counts as a sacrifice; above it must cost 2+ pawns.
+        let sacrificeThreshold = rating < 2000 ? 1 : 2
+
+        // Phase A/B: win probabilities from the mover's side and expected points lost.
+        let pBefore = before.eval.winPercent(for: mover, rating: rating) / 100
+        var pAfter = after.eval.winPercent(for: mover, rating: rating) / 100
+        let playedBest = before.best == move.uci
+        var epl = playedBest ? 0.0 : max(0, pBefore - pAfter)
+        let legalCount = pos.legalMoves().count
+
+        var cls: MoveClass
+        if legalCount == 1 {
+            cls = .forced
+        } else if isBook {
+            cls = .book
+        } else {
+            // Tier 3: Brilliant needs all of: EPL <= 0.02, a real sacrifice, not losing
+            // afterwards (P >= 0.40) and not already winning (P < 0.90). The quick search may
+            // not see the point of a sacrifice yet, so a promising one gets a deeper look.
+            var brilliant = false
+            if pBefore < 0.90, move.promotion == nil, atMost(epl, 0.08),
+               sacrificeValue(pos: pos, move: move) >= sacrificeThreshold {
+                var checkedEPL = epl
+                var checkedAfter = pAfter
+                if !atMost(epl, 0.02) || pAfter < 0.40, next.status() == .ongoing {
+                    let deeper = await deeperWinPercent(after: next, for: mover,
+                                                        rating: rating, profile: profile)
+                    try Task.checkCancellation()
+                    if let d = deeper {
+                        checkedAfter = d / 100
+                        checkedEPL = playedBest ? 0 : max(0, pBefore - checkedAfter)
+                    }
+                }
+                if atMost(checkedEPL, 0.02), checkedAfter >= 0.40 {
+                    brilliant = true
+                    epl = checkedEPL
+                    pAfter = checkedAfter
+                }
+            }
+
+            // Tier 4: Great is any of: the only good move, turning the game around,
+            // or (optionally) a swing away from a big advantage.
+            var onlyGoodMove = false
+            if let second = before.second {
+                let pSecond = second.winPercent(for: mover, rating: rating) / 100
+                onlyGoodMove = pBefore - pSecond > 0.10
+            }
+            let great = (onlyGoodMove && atMost(epl, 0.02))
+                || (pBefore < 0.50 && pAfter >= 0.70)
+                || (greatIncludesLostAdvantage && pBefore >= 0.70 && pAfter < 0.50)
+
+            if brilliant {
+                cls = .brilliant
+            } else if great {
+                cls = .great
+            } else if opponentLastLoss >= 0.20 && epl >= 0.10 - 1e-6 {
+                // Tier 5: the opponent just blundered and this move did not take advantage.
+                cls = .miss
+            } else if playedBest {
+                // Phase D: best means the engine's own move; an equal-scoring alternative is excellent.
+                cls = .best
+            } else if atMost(epl, 0.02) {
+                cls = .excellent
+            } else if atMost(epl, 0.05) {
+                cls = .good
+            } else if atMost(epl, 0.10) {
+                cls = .inaccuracy
+            } else if atMost(epl, 0.20) {
+                cls = .mistake
+            } else {
+                cls = .blunder
+            }
+        }
+
+        // Phase E: accuracy. Forced and book moves are 100 but left out of the average.
+        let acc: Double
+        switch cls {
+        case .forced, .book, .best, .brilliant, .great:
+            acc = 100
+        default:
+            acc = accuracy(forEPL: epl)
+        }
+
+        var bestSAN: String? = nil
+        if let b = before.best, let bm = pos.move(fromUCI: b) { bestSAN = pos.san(bm) }
+
+        return ClassifiedMove(classification: cls,
+                              epl: epl,
+                              accuracy: acc,
+                              bestUCI: before.best,
+                              bestSAN: bestSAN,
+                              countsTowardAverage: cls != .forced && cls != .book)
     }
 
     // MARK: Heuristics

@@ -27,6 +27,14 @@ enum Prefs {
     /// Rating used to tune move classification (lower ratings are judged more leniently).
     static let ratingKey = "playerRating"
     static let defaultRating = 1500
+    /// Classify each move right after it is played (off by default: it uses the engine a lot).
+    static let liveKey = "liveAnalysis"
+    /// Also classify the opponent's moves during live analysis.
+    static let liveOpponentKey = "liveAnalysisOpponent"
+
+    static var liveAnalysis: Bool {
+        return UserDefaults.standard.object(forKey: liveKey) as? Bool ?? false
+    }
 
     static var rating: Int {
         let v = UserDefaults.standard.integer(forKey: ratingKey)
