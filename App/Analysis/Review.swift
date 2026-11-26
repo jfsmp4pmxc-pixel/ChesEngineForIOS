@@ -237,7 +237,6 @@ enum ReviewAnalyzer {
     /// Great has a branch that fires when a move throws away a big advantage. It is what
     /// the reference classification specifies, but it labels the player's own blunder
     /// "great", so it can be switched off here.
-    private static let greatIncludesLostAdvantage = true
 
     private static func combine(_ values: [Double]) -> Double {
         guard !values.isEmpty else { return 100 }
@@ -365,6 +364,7 @@ enum ReviewAnalyzer {
                          rating: Int,
                          profile: EngineProfile) async throws -> ClassifiedMove {
         let mover = pos.turn
+        let opponentSide = mover.opposite
         // Below 2000 any net material loss counts as a sacrifice; above it must cost 2+ pawns.
         let sacrificeThreshold = rating < 2000 ? 1 : 2
 
@@ -384,8 +384,16 @@ enum ReviewAnalyzer {
             // Tier 3: Brilliant needs all of: EPL <= 0.02, a real sacrifice, not losing
             // afterwards (P >= 0.40) and not already winning (P < 0.90). The quick search may
             // not see the point of a sacrifice yet, so a promising one gets a deeper look.
+            // How much worse the second-best move is (win probability for the mover).
+            var gapToSecond = 0.0
+            if let second = before.second {
+                gapToSecond = pBefore - second.winPercent(for: mover, rating: rating) / 100
+            }
+            // Already winning is fine for a Brilliant when this is the only winning move
+            // (e.g. the one king move that keeps a forced mate on the board).
+            let soleWinner = gapToSecond >= 0.25
             var brilliant = false
-            if pBefore < 0.90, move.promotion == nil, atMost(epl, 0.08),
+            if pBefore < 0.90 || soleWinner, move.promotion == nil, atMost(epl, 0.08),
                sacrificeValue(pos: pos, move: move) >= sacrificeThreshold {
                 var checkedEPL = epl
                 var checkedAfter = pAfter
@@ -407,11 +415,19 @@ enum ReviewAnalyzer {
 
             // Tier 4: Great is any of: the only good move, turning the game around,
             // or (optionally) a swing away from a big advantage.
-            var onlyGoodMove = false
-            if let second = before.second {
-                let pSecond = second.winPercent(for: mover, rating: rating) / 100
-                onlyGoodMove = pBefore - pSecond > 0.10
+            // Obvious moves are never Great: taking material that is simply free, pulling a
+            // hanging piece out of danger, or getting out of check when there are few ways.
+            var obvious = false
+            if let taken = pos.board[move.to], taken.side != mover, pos.see(on: move.to, by: mover) > 0 {
+                obvious = true
             }
+            if pos.see(on: move.from, by: opponentSide) > 0, next.see(on: move.to, by: opponentSide) <= 0 {
+                obvious = true
+            }
+            if pos.inCheck, legalCount <= 3 { obvious = true }
+            // Only-move Great: every alternative is much worse (a gap of 20 points of win
+            // probability or more), in a position that is not already crushing.
+            let onlyGoodMove = gapToSecond >= 0.20 && pBefore < 0.85 && pAfter >= 0.35 && !obvious
             // A plain recapture (taking back on the square where the opponent just took) is
             // the natural answer to an exchange, so it is only Great when it truly turns
             // the game around, not merely because not recapturing would lose a piece.
@@ -420,15 +436,10 @@ enum ReviewAnalyzer {
                prev.position.board[prev.move.to] != nil {
                 isRecapture = true
             }
-            let turnaround = pBefore < 0.50 && pAfter >= 0.70
-            let great: Bool
-            if isRecapture {
-                great = turnaround
-            } else {
-                great = (onlyGoodMove && atMost(epl, 0.02))
-                    || turnaround
-                    || (greatIncludesLostAdvantage && pBefore >= 0.70 && pAfter < 0.50)
-            }
+            let turnaround = pBefore < 0.50 && pAfter >= 0.70 && atMost(epl, 0.02)
+            let great = isRecapture
+                ? turnaround
+                : ((onlyGoodMove && atMost(epl, 0.02)) || turnaround)
 
             if brilliant {
                 cls = .brilliant
