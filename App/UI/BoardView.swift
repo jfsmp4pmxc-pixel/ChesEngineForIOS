@@ -314,10 +314,11 @@ struct BoardView: View {
                         )
                 }
                 if let b = badge, let target = badgeSquare ?? lastMove?.to {
-                    let d = cell * 0.46
+                    // Centred on the square's top-right corner (kept inside the board).
+                    let d = cell * 0.5
                     let c = center(of: target, cell: cell)
-                    let x = min(max(c.x + cell / 2 - d * 0.40, d / 2), size - d / 2)
-                    let y = min(max(c.y - cell / 2 + d * 0.40, d / 2), size - d / 2)
+                    let x = min(max(c.x + cell / 2, d / 2), size - d / 2)
+                    let y = min(max(c.y - cell / 2, d / 2), size - d / 2)
                     ClassIcon(cls: b)
                         .frame(width: d, height: d)
                         .position(x: x, y: y)
@@ -448,7 +449,8 @@ struct BoardView: View {
             Rectangle().fill(light ? lightColor : darkColor)
 
             if let lm = lastMove, lm.from == sq || lm.to == sq {
-                Rectangle().fill(Color.yellow.opacity(0.4))
+                // The move's squares take the colour of its classification when there is one.
+                Rectangle().fill(badge.map { $0.color.opacity(0.5) } ?? Color.yellow.opacity(0.4))
             }
             if marks.contains(sq) {
                 Rectangle().fill(Color.red.opacity(0.55))
