@@ -107,6 +107,7 @@ final class ReviewViewModel: ObservableObject {
                                                                before: before,
                                                                after: after,
                                                                isBook: false,
+                                                               previous: ply >= 1 ? (positions[ply - 1], sb.moves[ply - 1]) : nil,
                                                                opponentLastLoss: 0,
                                                                rating: rating,
                                                                profile: profile)

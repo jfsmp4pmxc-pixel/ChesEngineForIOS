@@ -284,6 +284,7 @@ enum ReviewAnalyzer {
                                        before: evals[i],
                                        after: evals[i + 1],
                                        isBook: i < bookPlies,
+                                       previous: i > 0 ? (positions[i - 1], moves[i - 1]) : nil,
                                        opponentLastLoss: opponentLastLoss,
                                        rating: rating,
                                        profile: profile)
@@ -359,6 +360,7 @@ enum ReviewAnalyzer {
                          before: PositionEval,
                          after: PositionEval,
                          isBook: Bool,
+                         previous: (position: Position, move: Move)? = nil,
                          opponentLastLoss: Double,
                          rating: Int,
                          profile: EngineProfile) async throws -> ClassifiedMove {
@@ -410,9 +412,23 @@ enum ReviewAnalyzer {
                 let pSecond = second.winPercent(for: mover, rating: rating) / 100
                 onlyGoodMove = pBefore - pSecond > 0.10
             }
-            let great = (onlyGoodMove && atMost(epl, 0.02))
-                || (pBefore < 0.50 && pAfter >= 0.70)
-                || (greatIncludesLostAdvantage && pBefore >= 0.70 && pAfter < 0.50)
+            // A plain recapture (taking back on the square where the opponent just took) is
+            // the natural answer to an exchange, so it is only Great when it truly turns
+            // the game around, not merely because not recapturing would lose a piece.
+            var isRecapture = false
+            if let prev = previous, move.to == prev.move.to, pos.board[move.to] != nil,
+               prev.position.board[prev.move.to] != nil {
+                isRecapture = true
+            }
+            let turnaround = pBefore < 0.50 && pAfter >= 0.70
+            let great: Bool
+            if isRecapture {
+                great = turnaround
+            } else {
+                great = (onlyGoodMove && atMost(epl, 0.02))
+                    || turnaround
+                    || (greatIncludesLostAdvantage && pBefore >= 0.70 && pAfter < 0.50)
+            }
 
             if brilliant {
                 cls = .brilliant
@@ -459,27 +475,21 @@ enum ReviewAnalyzer {
 
     // MARK: Heuristics
 
-    /// How much material (in pawns) the move newly leaves to be won, minus what the move
-    /// itself captures. Any of the mover's pieces worth a minor piece or more counts, not
-    /// only the one that moved, and the opponent must have a legal capture of it. Pieces
-    /// that were already attacked before the move do not count as sacrificed.
+    /// How much material (in pawns) the move itself puts up for capture: the piece that
+    /// was just moved (a knight, bishop, rook or queen) lands where the opponent can win it,
+    /// minus what the move captures. Only the moved piece counts: leaving some other piece
+    /// hanging is abandoning material, not a sacrifice. A piece that was already attacked
+    /// on its old square does not count as newly sacrificed.
     private static func sacrificeValue(pos: Position, move: Move) -> Int {
-        guard let moving = pos.board[move.from] else { return 0 }
-        let mover = moving.side
-        let opponent = mover.opposite
+        guard let moving = pos.board[move.from],
+              moving.type != .pawn, moving.type != .king else { return 0 }
+        let opponent = moving.side.opposite
         let captured = pos.board[move.to]?.type.value ?? 0
         let next = pos.make(move)
-        let replies = next.legalMoves()
-        var risk = 0
-        for sq in 0..<64 {
-            guard let p = next.board[sq], p.side == mover, p.type != .king, p.type != .pawn else { continue }
-            guard replies.contains(where: { $0.to == sq }) else { continue }
-            let origin = sq == move.to ? move.from : sq
-            let already = pos.board[origin] != nil ? pos.see(on: origin, by: opponent) : 0
-            let now = next.see(on: sq, by: opponent)
-            risk = max(risk, now - already)
-        }
-        return risk - captured
+        guard next.legalMoves().contains(where: { $0.to == move.to }) else { return 0 }
+        let already = pos.see(on: move.from, by: opponent)
+        let now = next.see(on: move.to, by: opponent)
+        return now - already - captured
     }
 
     /// Second look at the position after a move with a deeper search. Returns the win

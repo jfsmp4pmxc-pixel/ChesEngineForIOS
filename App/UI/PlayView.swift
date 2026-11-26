@@ -258,6 +258,7 @@ final class PlayViewModel: ObservableObject {
                                                            before: before,
                                                            after: after,
                                                            isBook: isBook,
+                                                           previous: ply >= 1 ? (positions[ply - 1], moves[ply - 1]) : nil,
                                                            opponentLastLoss: liveLosses[ply - 1] ?? 0,
                                                            rating: rating,
                                                            profile: profile)
