@@ -475,21 +475,34 @@ enum ReviewAnalyzer {
 
     // MARK: Heuristics
 
-    /// How much material (in pawns) the move itself puts up for capture: the piece that
-    /// was just moved (a knight, bishop, rook or queen) lands where the opponent can win it,
-    /// minus what the move captures. Only the moved piece counts: leaving some other piece
-    /// hanging is abandoning material, not a sacrifice. A piece that was already attacked
-    /// on its old square does not count as newly sacrificed.
+    /// How much material (in pawns) the move gives up on purpose, minus what the move
+    /// itself captures. Both kinds count: putting the moved piece where it can be taken
+    /// (a sacrifice), and leaving a piece of the mover's en prise by playing something
+    /// else, e.g. ignoring an attack on the queen (abandoning a piece). Only knights,
+    /// bishops, rooks and queens count, and the opponent must have a legal capture. For
+    /// the moved piece, danger it was already in on its old square is not counted again.
     private static func sacrificeValue(pos: Position, move: Move) -> Int {
-        guard let moving = pos.board[move.from],
-              moving.type != .pawn, moving.type != .king else { return 0 }
-        let opponent = moving.side.opposite
+        guard let moving = pos.board[move.from] else { return 0 }
+        let mover = moving.side
+        let opponent = mover.opposite
         let captured = pos.board[move.to]?.type.value ?? 0
         let next = pos.make(move)
-        guard next.legalMoves().contains(where: { $0.to == move.to }) else { return 0 }
-        let already = pos.see(on: move.from, by: opponent)
-        let now = next.see(on: move.to, by: opponent)
-        return now - already - captured
+        let replies = next.legalMoves()
+        var risk = 0
+        for sq in 0..<64 {
+            guard let p = next.board[sq], p.side == mover, p.type != .king, p.type != .pawn else { continue }
+            guard replies.contains(where: { $0.to == sq }) else { continue }
+            let now = next.see(on: sq, by: opponent)
+            if sq == move.to {
+                // The piece that moved: only the extra danger it walked into.
+                let already = pos.see(on: move.from, by: opponent)
+                risk = max(risk, now - already)
+            } else {
+                // A piece that stayed behind and is left to be taken.
+                risk = max(risk, now)
+            }
+        }
+        return risk - captured
     }
 
     /// Second look at the position after a move with a deeper search. Returns the win
