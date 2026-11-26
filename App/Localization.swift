@@ -10,6 +10,7 @@ enum Vi {
         case "Insufficient material": return "Không đủ quân để chiếu hết"
         case "Fifty-move rule": return "Luật 50 nước"
         case "Threefold repetition": return "Lặp thế 3 lần"
+        case "Time forfeit": return "Hết giờ"
         case "Resignation": return "Đầu hàng"
         case "Draw agreed": return "Hai bên đồng ý hòa"
         default: return text

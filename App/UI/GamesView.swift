@@ -50,7 +50,7 @@ struct GamesView: View {
                 ToolbarItem(placement: .navigationBarTrailing) {
                     Menu {
                         Button { showPaste = true } label: { Label("Dán PGN", systemImage: "doc.on.clipboard") }
-                        Button { showImporter = true } label: { Label("Nhập file PGN", systemImage: "square.and.arrow.down") }
+                        Button { pickPGN() } label: { Label("Nhập file PGN", systemImage: "square.and.arrow.down") }
                     } label: {
                         Image(systemName: "plus")
                     }
@@ -62,24 +62,24 @@ struct GamesView: View {
                     info = n == 0 ? "Không tìm thấy ván cờ hợp lệ trong văn bản này." : "Đã nhập \(n) ván cờ."
                 }
             }
-            .fileImporter(isPresented: $showImporter, allowedContentTypes: pgnTypes, allowsMultipleSelection: true) { result in
-                guard case .success(let urls) = result else { return }
-                var total = 0
-                for url in urls {
-                    let scoped = url.startAccessingSecurityScopedResource()
-                    defer { if scoped { url.stopAccessingSecurityScopedResource() } }
-                    if let data = try? Data(contentsOf: url) {
-                        let text = String(data: data, encoding: .utf8) ?? String(decoding: data, as: UTF8.self)
-                        total += store.importPGN(text)
-                    }
-                }
-                info = total == 0 ? "Không tìm thấy ván cờ hợp lệ trong file đã chọn." : "Đã nhập \(total) ván cờ."
-            }
             .alert(info ?? "", isPresented: Binding(get: { info != nil }, set: { if !$0 { info = nil } })) {
                 Button("OK", role: .cancel) {}
             }
         }
         .navigationViewStyle(.stack)
+    }
+
+    private func pickPGN() {
+        FilePicker.present { urls in
+            var total = 0
+            for url in urls {
+                if let data = try? Data(contentsOf: url) {
+                    let text = String(data: data, encoding: .utf8) ?? String(decoding: data, as: UTF8.self)
+                    total += store.importPGN(text)
+                }
+            }
+            info = total == 0 ? "Không tìm thấy ván cờ hợp lệ trong file đã chọn." : "Đã nhập \(total) ván cờ."
+        }
     }
 
     private func row(_ g: GameRecord) -> some View {

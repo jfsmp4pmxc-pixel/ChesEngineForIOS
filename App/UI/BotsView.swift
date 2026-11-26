@@ -76,17 +76,7 @@ struct BotsView: View {
             .navigationTitle("Bot")
             .toolbar {
                 ToolbarItem(placement: .navigationBarTrailing) {
-                    Button { showImporter = true } label: { Image(systemName: "plus") }
-                }
-            }
-            .fileImporter(isPresented: $showImporter, allowedContentTypes: pythonTypes, allowsMultipleSelection: true) { result in
-                guard case .success(let urls) = result else { return }
-                for url in urls {
-                    do {
-                        try bots.importBot(from: url)
-                    } catch {
-                        message = error.localizedDescription
-                    }
+                    Button { pickBots() } label: { Image(systemName: "plus") }
                 }
             }
             .alert(message ?? "", isPresented: Binding(get: { message != nil }, set: { if !$0 { message = nil } })) {
@@ -95,6 +85,18 @@ struct BotsView: View {
             .onAppear { bots.reload() }
         }
         .navigationViewStyle(.stack)
+    }
+
+    private func pickBots() {
+        FilePicker.present { urls in
+            for url in urls {
+                do {
+                    try bots.importBot(from: url)
+                } catch {
+                    message = error.localizedDescription
+                }
+            }
+        }
     }
 
     private func test(_ bot: PythonBotFile) {

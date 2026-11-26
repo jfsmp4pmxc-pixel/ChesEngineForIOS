@@ -94,6 +94,13 @@ struct GameSession {
         termination = "Resignation"
     }
 
+    /// `side` ran out of time and loses.
+    mutating func timeout(_ side: Side) {
+        guard !isOver else { return }
+        result = side == .white ? "0-1" : "1-0"
+        termination = "Time forfeit"
+    }
+
     mutating func agreeDraw() {
         guard !isOver else { return }
         result = "1/2-1/2"

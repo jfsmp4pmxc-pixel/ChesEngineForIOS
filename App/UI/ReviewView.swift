@@ -4,11 +4,13 @@ final class ReviewViewModel: ObservableObject {
     @Published var record: GameRecord
     @Published var index: Int {
         didSet {
-            if index != oldValue { userArrows = [] }
+            if index != oldValue { userArrows = []; marks = [] }
         }
     }
     @Published var flipped = false
     @Published var arrowMode = false
+    @Published var markMode = false
+    @Published var marks: Set<Int> = []
     @Published var userArrows: [BoardArrow] = []
     @Published var progress: Double = 0
     @Published var analyzing = false
@@ -101,8 +103,9 @@ struct ReviewView: View {
                 }
 
                 ArrowModeBar(isOn: $vm.arrowMode,
-                             count: vm.userArrows.count,
-                             onClear: { vm.userArrows = [] })
+                             markOn: $vm.markMode,
+                             count: vm.userArrows.count + vm.marks.count,
+                             onClear: { vm.userArrows = []; vm.marks = [] })
 
                 BoardView(position: vm.position,
                           flipped: vm.flipped,
@@ -111,7 +114,12 @@ struct ReviewView: View {
                           badge: vm.currentReview?.classification,
                           drawingMode: vm.arrowMode,
                           userArrows: vm.userArrows,
-                          onArrow: { vm.userArrows.toggle($0) })
+                          onArrow: { vm.userArrows.toggle($0) },
+                          markMode: vm.markMode,
+                          marks: vm.marks,
+                          onMark: { sq in
+                              if vm.marks.contains(sq) { vm.marks.remove(sq) } else { vm.marks.insert(sq) }
+                          })
                     .padding(.horizontal, 8)
 
                 moveInfo

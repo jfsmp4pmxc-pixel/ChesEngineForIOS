@@ -15,8 +15,6 @@ struct AppearanceView: View {
         case slot(String)
     }
 
-    @State private var target: Target? = nil
-    @State private var showImporter = false
     @State private var message: String? = nil
 
     private static let pieceSlots: [(piece: Piece, title: String)] = {
@@ -89,11 +87,6 @@ struct AppearanceView: View {
             }
         }
         .navigationTitle("Giao diện")
-        .fileImporter(isPresented: $showImporter,
-                      allowedContentTypes: [.image],
-                      allowsMultipleSelection: true) { result in
-            handle(result)
-        }
     }
 
     private var preview: some View {
@@ -127,13 +120,14 @@ struct AppearanceView: View {
     }
 
     private func start(_ t: Target) {
-        target = t
-        showImporter = true
+        var multiple = true
+        if case .slot = t { multiple = false }
+        FilePicker.present(types: [.image], multiple: multiple) { urls in
+            handle(urls, for: t)
+        }
     }
 
-    private func handle(_ result: Result<[URL], Error>) {
-        guard let t = target else { return }
-        guard case .success(let urls) = result, !urls.isEmpty else { return }
+    private func handle(_ urls: [URL], for t: Target) {
         switch t {
         case .slot(let name):
             if CustomAssets.importImage(from: urls[0], as: name) {

@@ -16,6 +16,25 @@ enum ColorChoice: String, CaseIterable, Identifiable {
     var id: String { rawValue }
 }
 
+/// A clock setting: base time plus an increment added after every move.
+struct TimeControl: Identifiable, Equatable {
+    let id: Int
+    let name: String
+    let base: Double
+    let increment: Double
+
+    static let all: [TimeControl] = [
+        TimeControl(id: 0, name: "10 phút", base: 600, increment: 0),
+        TimeControl(id: 1, name: "5 phút", base: 300, increment: 0),
+        TimeControl(id: 2, name: "3 phút", base: 180, increment: 0),
+        TimeControl(id: 3, name: "2 phút + 1 giây", base: 120, increment: 1),
+        TimeControl(id: 4, name: "1 phút", base: 60, increment: 0),
+        TimeControl(id: 5, name: "1 phút + 1 giây", base: 60, increment: 1),
+        TimeControl(id: 6, name: "20 giây + 1", base: 20, increment: 1),
+        TimeControl(id: 7, name: "10 giây + 1", base: 10, increment: 1)
+    ]
+}
+
 /// Verdict on a move played in the current game (live analysis).
 struct LiveMove {
     var classification: MoveClass
@@ -27,11 +46,16 @@ final class PlayViewModel: ObservableObject {
     /// Arrows drawn by the player are cleared whenever a move is played or taken back.
     @Published var session = GameSession() {
         didSet {
-            if oldValue.moves.count != session.moves.count { userArrows = [] }
+            if oldValue.moves.count != session.moves.count { userArrows = []; marks = [] }
         }
     }
     @Published var arrowMode = false
     @Published var userArrows: [BoardArrow] = []
+    @Published var markMode = false
+    @Published var marks: Set<Int> = []
+    /// Clocks (seconds left); only meaningful when `activeControl` is set.
+    @Published var whiteTime: Double = 0
+    @Published var blackTime: Double = 0
     /// Live verdicts by move index, and moves whose analysis failed.
     @Published var live: [Int: LiveMove] = [:]
     @Published var liveFailed: Set<Int> = []
@@ -48,6 +72,8 @@ final class PlayViewModel: ObservableObject {
     @Published var colorChoice: ColorChoice = .white
     @Published var levelID: Int = 3
     @Published var botFilename: String = ""
+    /// Chosen time control for the next game (-1 = unlimited).
+    @Published var timeControlID: Int = -1
 
     private(set) var humanSide: Side = .white
     private var generation = UUID()
@@ -70,18 +96,96 @@ final class PlayViewModel: ObservableObject {
         userArrows.toggle(arrow)
     }
 
+    func toggleMark(_ sq: Int) {
+        if marks.contains(sq) { marks.remove(sq) } else { marks.insert(sq) }
+    }
+
+    // MARK: Clock
+
+    private(set) var activeControl: TimeControl? = nil
+    private var clockTimer: Timer? = nil
+    private var lastTick = Date()
+
+    private func startClock() {
+        clockTimer?.invalidate()
+        clockTimer = nil
+        activeControl = TimeControl.all.first(where: { $0.id == timeControlID })
+        guard let tc = activeControl else { return }
+        whiteTime = tc.base
+        blackTime = tc.base
+        lastTick = Date()
+        let t = Timer(timeInterval: 0.1, repeats: true) { [weak self] _ in self?.tick() }
+        RunLoop.main.add(t, forMode: .common)
+        clockTimer = t
+    }
+
+    private func stopClock() {
+        clockTimer?.invalidate()
+        clockTimer = nil
+    }
+
+    /// The clocks start once both sides have made their first move.
+    private func tick() {
+        let now = Date()
+        let dt = now.timeIntervalSince(lastTick)
+        lastTick = now
+        guard activeControl != nil else { return }
+        if session.isOver { stopClock(); return }
+        guard session.moves.count >= 2 else { return }
+        let side = session.position.turn
+        if side == .white { whiteTime = max(0, whiteTime - dt) } else { blackTime = max(0, blackTime - dt) }
+        if (side == .white ? whiteTime : blackTime) <= 0 { flag(side) }
+    }
+
+    private func flag(_ side: Side) {
+        stopClock()
+        generation = UUID()
+        thinking = false
+        premoves = []
+        selected = nil
+        session.timeout(side)
+        persist()
+    }
+
+    func timeLeft(_ side: Side) -> Double { side == .white ? whiteTime : blackTime }
+
+    var clockRunningSide: Side? {
+        guard activeControl != nil, !session.isOver, session.moves.count >= 2 else { return nil }
+        return session.position.turn
+    }
+
+    private func addIncrement() {
+        guard let tc = activeControl, tc.increment > 0, session.moves.count > 2 else { return }
+        // The side that just moved gets the increment.
+        if session.position.turn == .white { blackTime += tc.increment } else { whiteTime += tc.increment }
+    }
+
     // MARK: Live analysis
 
     private func moverIsOpponent(ply: Int) -> Bool {
         return opponent != .human && session.positions[ply].turn != humanSide
     }
 
-    /// Verdict on the last move, unless it is the opponent's and those are hidden.
-    func liveInfo(showOpponent: Bool) -> LiveMove? {
-        let ply = session.moves.count - 1
-        guard ply >= 0, let info = live[ply] else { return nil }
-        if moverIsOpponent(ply: ply) && !showOpponent { return nil }
-        return info
+    /// Verdicts to show: the player's own previous move (so it does not vanish as soon as
+    /// the opponent replies) and the last move (unless it is the opponent's and those are hidden).
+    func liveEntries(showOpponent: Bool) -> [(ply: Int, info: LiveMove)] {
+        let last = session.moves.count - 1
+        guard last >= 0 else { return [] }
+        var out: [(ply: Int, info: LiveMove)] = []
+        if opponent != .human, last >= 1, !moverIsOpponent(ply: last - 1), let info = live[last - 1],
+           moverIsOpponent(ply: last) {
+            out.append((last - 1, info))
+        }
+        if let info = live[last], !(moverIsOpponent(ply: last) && !showOpponent) {
+            out.append((last, info))
+        }
+        return out
+    }
+
+    /// Square the badge on the board belongs to, with its classification.
+    func liveBadge(showOpponent: Bool) -> (square: Int, cls: MoveClass)? {
+        guard let e = liveEntries(showOpponent: showOpponent).last, e.ply < session.moves.count else { return nil }
+        return (session.moves[e.ply].to, e.info.classification)
     }
 
     func livePending(showOpponent: Bool) -> Bool {
@@ -257,7 +361,9 @@ final class PlayViewModel: ObservableObject {
         premoves = []
         resetLive()
         userArrows = []
+        marks = []
         session = GameSession()
+        startClock()
         recordID = UUID()
         started = Date()
 
@@ -361,6 +467,7 @@ final class PlayViewModel: ObservableObject {
     }
 
     private func afterMove() {
+        addIncrement()
         // The opponent's search is queued first so live analysis never delays its reply.
         if session.isOver {
             persist()
@@ -512,8 +619,9 @@ struct PlayView: View {
             ScrollView {
                 VStack(spacing: 10) {
                     ArrowModeBar(isOn: $vm.arrowMode,
-                                 count: vm.userArrows.count,
-                                 onClear: { vm.userArrows = [] })
+                                 markOn: $vm.markMode,
+                                 count: vm.userArrows.count + vm.marks.count,
+                                 onClear: { vm.userArrows = []; vm.marks = [] })
 
                     playerLabel(top: true)
 
@@ -522,14 +630,18 @@ struct PlayView: View {
                               lastMove: vm.session.lastMove,
                               selected: vm.selected,
                               legalTargets: vm.legalTargets,
-                              badge: liveOn ? vm.liveInfo(showOpponent: liveOpponent)?.classification : nil,
+                              badge: liveOn ? vm.liveBadge(showOpponent: liveOpponent)?.cls : nil,
                               premoves: vm.premoves,
                               ghosts: vm.premoveGhosts.ghosts,
                               dimmed: vm.premoveGhosts.dimmed,
                               onTap: { vm.tap($0) },
                               drawingMode: vm.arrowMode,
                               userArrows: vm.userArrows,
-                              onArrow: { vm.drawArrow($0) })
+                              onArrow: { vm.drawArrow($0) },
+                              markMode: vm.markMode,
+                              marks: vm.marks,
+                              onMark: { vm.toggleMark($0) },
+                              badgeSquare: liveOn ? vm.liveBadge(showOpponent: liveOpponent)?.square : nil)
                         .padding(.horizontal, 8)
 
                     playerLabel(top: false)
@@ -599,19 +711,25 @@ struct PlayView: View {
     @ViewBuilder
     private var liveLine: some View {
         if liveOn, !vm.session.moves.isEmpty {
-            if let info = vm.liveInfo(showOpponent: liveOpponent) {
-                VStack(spacing: 2) {
-                    HStack(spacing: 6) {
-                        ClassIcon(cls: info.classification)
-                            .frame(width: 20, height: 20)
-                        Text("\(info.san) \(info.classification.phrase)")
-                            .font(.subheadline.weight(.semibold))
-                    }
-                    if let best = info.bestSAN,
-                       [.good, .excellent, .inaccuracy, .mistake, .miss, .blunder].contains(info.classification) {
-                        Text("Tốt nhất là \(best)")
-                            .font(.footnote)
-                            .foregroundColor(.secondary)
+            let entries = vm.liveEntries(showOpponent: liveOpponent)
+            if !entries.isEmpty {
+                VStack(spacing: 6) {
+                    ForEach(Array(entries.enumerated()), id: \.offset) { item in
+                        let info = item.element.info
+                        VStack(spacing: 2) {
+                            HStack(spacing: 6) {
+                                ClassIcon(cls: info.classification)
+                                    .frame(width: 20, height: 20)
+                                Text("\(info.san) \(info.classification.phrase)")
+                                    .font(.subheadline.weight(.semibold))
+                            }
+                            if let best = info.bestSAN,
+                               [.good, .excellent, .inaccuracy, .mistake, .miss, .blunder].contains(info.classification) {
+                                Text("Tốt nhất là \(best)")
+                                    .font(.footnote)
+                                    .foregroundColor(.secondary)
+                            }
+                        }
                     }
                 }
             } else if vm.livePending(showOpponent: liveOpponent) {
@@ -637,11 +755,33 @@ struct PlayView: View {
                 .frame(width: 14, height: 14)
             Text(name).font(.subheadline.weight(.medium))
             Spacer()
+            if vm.activeControl != nil {
+                clockText(side)
+            }
             if vm.thinking && vm.session.position.turn == side {
                 ProgressView()
             }
         }
         .padding(.horizontal, 16)
+    }
+
+    private func clockText(_ side: Side) -> some View {
+        let t = vm.timeLeft(side)
+        let running = vm.clockRunningSide == side
+        let text: String
+        if t < 10 {
+            text = String(format: "0:%04.1f", t)
+        } else {
+            let whole = Int(t.rounded(.up))
+            text = String(format: "%d:%02d", whole / 60, whole % 60)
+        }
+        return Text(text)
+            .font(.system(.title3, design: .monospaced).weight(.semibold))
+            .foregroundColor(t < 10 ? .red : .primary)
+            .padding(.horizontal, 8)
+            .padding(.vertical, 2)
+            .background(RoundedRectangle(cornerRadius: 6)
+                .fill(running ? Color.accentColor.opacity(0.25) : Color.secondary.opacity(0.12)))
     }
 
     private var controls: some View {
@@ -716,6 +856,12 @@ private struct SetupSheet: View {
                                 ForEach(bots.bots) { Text($0.name).tag($0.filename) }
                             }
                         }
+                    }
+                }
+                Section(header: Text("Thời gian")) {
+                    Picker("Thời gian", selection: $vm.timeControlID) {
+                        Text("Không giới hạn").tag(-1)
+                        ForEach(TimeControl.all) { Text($0.name).tag($0.id) }
                     }
                 }
                 if vm.opponent != .human {

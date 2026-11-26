@@ -55,20 +55,27 @@ extension Array where Element == BoardArrow {
 /// Switch that turns arrow drawing on or off, shown above a board.
 struct ArrowModeBar: View {
     @Binding var isOn: Bool
+    @Binding var markOn: Bool
+    /// Arrows plus marked squares currently on the board.
     let count: Int
     let onClear: () -> Void
 
     var body: some View {
         VStack(spacing: 4) {
             HStack(spacing: 12) {
-                Toggle(isOn: $isOn) {
+                Toggle(isOn: Binding(get: { isOn }, set: { isOn = $0; if $0 { markOn = false } })) {
                     Label("Vẽ mũi tên", systemImage: "arrow.up.right")
+                }
+                .toggleStyle(.button)
+
+                Toggle(isOn: Binding(get: { markOn }, set: { markOn = $0; if $0 { isOn = false } })) {
+                    Label("Tô ô", systemImage: "square.fill")
                 }
                 .toggleStyle(.button)
 
                 if count > 0 {
                     Button(action: onClear) {
-                        Label("Xóa mũi tên", systemImage: "trash")
+                        Label("Xóa hết", systemImage: "trash")
                     }
                     .buttonStyle(.bordered)
                 }
@@ -76,6 +83,12 @@ struct ArrowModeBar: View {
             }
             if isOn {
                 Text("Kéo từ ô này sang ô khác, hoặc chạm hai ô liên tiếp. Vẽ lại cùng mũi tên để xóa nó.")
+                    .font(.caption)
+                    .foregroundColor(.secondary)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+            }
+            if markOn {
+                Text("Chạm một ô để tô đỏ, chạm lần nữa để bỏ tô. Không giới hạn số ô.")
                     .font(.caption)
                     .foregroundColor(.secondary)
                     .frame(maxWidth: .infinity, alignment: .leading)
@@ -140,6 +153,12 @@ struct BoardView: View {
     var drawingMode: Bool = false
     var userArrows: [BoardArrow] = []
     var onArrow: ((BoardArrow) -> Void)? = nil
+    /// While marking, a tap toggles a red highlight on the square.
+    var markMode: Bool = false
+    var marks: Set<Int> = []
+    var onMark: ((Int) -> Void)? = nil
+    /// Square that carries the badge (defaults to where the last move ended).
+    var badgeSquare: Int? = nil
 
     @AppStorage(Prefs.animateKey) private var animate = true
     @AppStorage(Prefs.slideDurationKey) private var slideDuration = Prefs.defaultSlideDuration
@@ -175,7 +194,11 @@ struct BoardView: View {
          onTap: ((Int) -> Void)? = nil,
          drawingMode: Bool = false,
          userArrows: [BoardArrow] = [],
-         onArrow: ((BoardArrow) -> Void)? = nil) {
+         onArrow: ((BoardArrow) -> Void)? = nil,
+         markMode: Bool = false,
+         marks: Set<Int> = [],
+         onMark: ((Int) -> Void)? = nil,
+         badgeSquare: Int? = nil) {
         self.position = position
         self.flipped = flipped
         self.lastMove = lastMove
@@ -190,6 +213,10 @@ struct BoardView: View {
         self.drawingMode = drawingMode
         self.userArrows = userArrows
         self.onArrow = onArrow
+        self.markMode = markMode
+        self.marks = marks
+        self.onMark = onMark
+        self.badgeSquare = badgeSquare
         _shown = State(initialValue: position)
         _shownMove = State(initialValue: lastMove)
     }
@@ -261,6 +288,18 @@ struct BoardView: View {
                         .position(x: b.x, y: b.y)
                         .allowsHitTesting(false)
                 }
+                if markMode {
+                    Color.clear
+                        .contentShape(Rectangle())
+                        .gesture(
+                            DragGesture(minimumDistance: 0)
+                                .onEnded { value in
+                                    let a = squareAt(value.startLocation, cell: cell)
+                                    let b = squareAt(value.location, cell: cell)
+                                    if a == b { onMark?(a) }
+                                }
+                        )
+                }
                 if drawingMode {
                     // Sits above the squares so taps and drags draw instead of moving pieces.
                     Color.clear
@@ -274,9 +313,9 @@ struct BoardView: View {
                                 }
                         )
                 }
-                if let b = badge, let lm = lastMove {
+                if let b = badge, let target = badgeSquare ?? lastMove?.to {
                     let d = cell * 0.46
-                    let c = center(of: lm.to, cell: cell)
+                    let c = center(of: target, cell: cell)
                     let x = min(max(c.x + cell / 2 - d * 0.40, d / 2), size - d / 2)
                     let y = min(max(c.y - cell / 2 + d * 0.40, d / 2), size - d / 2)
                     ClassIcon(cls: b)
@@ -410,6 +449,9 @@ struct BoardView: View {
 
             if let lm = lastMove, lm.from == sq || lm.to == sq {
                 Rectangle().fill(Color.yellow.opacity(0.4))
+            }
+            if marks.contains(sq) {
+                Rectangle().fill(Color.red.opacity(0.55))
             }
             if premoveSquares.contains(sq) {
                 Rectangle().fill(Color.red.opacity(0.32))
