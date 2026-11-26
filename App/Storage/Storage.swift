@@ -27,6 +27,9 @@ enum Prefs {
     /// How long a piece takes to glide to its square, in seconds.
     static let slideDurationKey = "slideDuration"
     static let defaultSlideDuration = 0.25
+    /// Size of the move-classification badge as a fraction of a square.
+    static let badgeScaleKey = "badgeScale"
+    static let defaultBadgeScale = 0.5
     /// Rating used to tune move classification (lower ratings are judged more leniently).
     static let ratingKey = "playerRating"
     static let defaultRating = 1500

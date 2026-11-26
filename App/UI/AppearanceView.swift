@@ -8,6 +8,7 @@ struct AppearanceView: View {
     @AppStorage(Theme.userArrowKey) private var userArrowHex = Theme.defaultUserArrow
     @AppStorage(Theme.bestArrowKey) private var bestArrowHex = Theme.defaultBestArrow
     @AppStorage(Theme.assetsVersionKey) private var assetsVersion = 0
+    @AppStorage(Prefs.badgeScaleKey) private var badgeScale = Prefs.defaultBadgeScale
 
     private enum Target {
         case bulkPieces
@@ -67,6 +68,19 @@ struct AppearanceView: View {
 
             Section(header: Text("Nhãn phân loại nước đi"),
                     footer: Text("Tên file khớp tên nhãn, ví dụ brilliant.png, blunder.png (great, best, excellent, good, book, inaccuracy, mistake, miss, blunder, forced).")) {
+                VStack(alignment: .leading, spacing: 4) {
+                    HStack {
+                        Text("Kích thước nhãn trên bàn cờ")
+                        Spacer()
+                        Text("\(Int((badgeScale * 100).rounded()))% ô")
+                            .foregroundColor(.secondary)
+                            .monospacedDigit()
+                    }
+                    Slider(value: $badgeScale, in: 0.25...0.9, step: 0.01)
+                    Button("Về mặc định") { badgeScale = Prefs.defaultBadgeScale }
+                        .font(.footnote)
+                        .buttonStyle(.borderless)
+                }
                 Button("Nhập nhiều ảnh nhãn…") { start(.bulkBadges) }
                 ForEach(MoveClass.allCases, id: \.self) { cls in
                     slotRow(title: cls.label, name: cls.iconName) {

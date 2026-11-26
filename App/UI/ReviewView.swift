@@ -4,8 +4,130 @@ final class ReviewViewModel: ObservableObject {
     @Published var record: GameRecord
     @Published var index: Int {
         didSet {
-            if index != oldValue { userArrows = []; marks = [] }
+            if index != oldValue { userArrows = []; marks = []; exitSandbox() }
         }
+    }
+
+    // MARK: Free play ("analysis board")
+
+    /// Moves played on the board from the position being viewed; the engine judges each one.
+    @Published var sandbox: GameSession? = nil
+    @Published var sbSelected: Int? = nil
+    @Published var sbPending: (from: Int, to: Int)? = nil
+    @Published var sbEval: Eval? = nil
+    @Published var sbBest: Move? = nil
+    @Published var sbVerdict: LiveMove? = nil
+    @Published var sbBusy = false
+    private var sbEvals: [Int: PositionEval] = [:]
+    private var sbGeneration = UUID()
+
+    var boardPosition: Position { sandbox?.position ?? position }
+    var boardLastMove: Move? { sandbox != nil ? sandbox?.lastMove : lastMove }
+
+    var sbTargets: Set<Int> {
+        guard let s = sbSelected else { return [] }
+        return Set(boardPosition.legalMoves().filter { $0.from == s }.map { $0.to })
+    }
+
+    var sbArrow: (from: Int, to: Int)? {
+        guard sandbox != nil, let m = sbBest else { return nil }
+        return (m.from, m.to)
+    }
+
+    func exitSandbox() {
+        sbGeneration = UUID()
+        sandbox = nil
+        sbSelected = nil
+        sbPending = nil
+        sbEval = nil
+        sbBest = nil
+        sbVerdict = nil
+        sbBusy = false
+        sbEvals = [:]
+    }
+
+    func tapBoard(_ sq: Int) {
+        guard sbPending == nil else { sbPending = nil; return }
+        let pos = boardPosition
+        if let sel = sbSelected {
+            if sq == sel { sbSelected = nil; return }
+            let candidates = pos.legalMoves().filter { $0.from == sel && $0.to == sq }
+            if candidates.count > 1 { sbPending = (sel, sq); return }
+            if let m = candidates.first { playSandbox(m); return }
+        }
+        if let p = pos.board[sq], p.side == pos.turn, !pos.legalMoves().filter({ $0.from == sq }).isEmpty {
+            sbSelected = sq
+        } else {
+            sbSelected = nil
+        }
+    }
+
+    func sbChoosePromotion(_ type: PieceType) {
+        guard let pp = sbPending else { return }
+        sbPending = nil
+        let m = Move(from: pp.from, to: pp.to, promotion: type)
+        if boardPosition.legalMoves().contains(m) { playSandbox(m) }
+    }
+
+    private func playSandbox(_ move: Move) {
+        if sandbox == nil { sandbox = GameSession(startFEN: position.fen) }
+        sandbox?.play(move)
+        sbSelected = nil
+        sbVerdict = nil
+        sbBest = nil
+        analyseSandbox()
+    }
+
+    private func analyseSandbox() {
+        guard let sb = sandbox, !sb.moves.isEmpty else { return }
+        let ply = sb.moves.count - 1
+        let positions = sb.positions
+        let move = sb.moves[ply]
+        let san = sb.sans[ply]
+        let gen = sbGeneration
+        let profile = Prefs.profile
+        let rating = Prefs.rating
+        sbBusy = true
+        Task { @MainActor in
+            do {
+                let before: PositionEval
+                if let c = self.sbEvals[ply] {
+                    before = c
+                } else {
+                    before = try await ReviewAnalyzer.evaluate(positions[ply], profile: profile)
+                    guard gen == self.sbGeneration else { return }
+                    self.sbEvals[ply] = before
+                }
+                let after = try await ReviewAnalyzer.evaluate(positions[ply + 1], profile: profile)
+                guard gen == self.sbGeneration else { return }
+                self.sbEvals[ply + 1] = after
+                let result = try await ReviewAnalyzer.classify(position: positions[ply],
+                                                               move: move,
+                                                               next: positions[ply + 1],
+                                                               before: before,
+                                                               after: after,
+                                                               isBook: false,
+                                                               opponentLastLoss: 0,
+                                                               rating: rating,
+                                                               profile: profile)
+                guard gen == self.sbGeneration else { return }
+                // Only the latest move's result is shown.
+                guard self.sandbox?.moves.count == ply + 1 else { return }
+                self.sbEval = after.eval
+                self.sbBest = after.best.flatMap { positions[ply + 1].move(fromUCI: $0) }
+                self.sbVerdict = LiveMove(classification: result.classification, san: san, bestSAN: result.bestSAN)
+                self.sbBusy = false
+            } catch {
+                if gen == self.sbGeneration { self.sbBusy = false }
+            }
+        }
+    }
+
+    /// Evaluation drawn in the bar: the one for the free-play position when there is one.
+    var barEval: Eval? {
+        if sandbox != nil, let e = sbEval { return e }
+        guard let rv = record.review, !rv.evals.isEmpty else { return nil }
+        return rv.evals[min(index, rv.evals.count - 1)]
     }
     @Published var flipped = false
     @Published var arrowMode = false
@@ -97,8 +219,8 @@ struct ReviewView: View {
             VStack(spacing: 12) {
                 header
 
-                if let review = vm.record.review {
-                    EvalBar(eval: review.evals[min(vm.index, review.evals.count - 1)], flipped: vm.flipped)
+                if let e = vm.barEval {
+                    EvalBar(eval: e, flipped: vm.flipped)
                         .padding(.horizontal, 8)
                 }
 
@@ -107,11 +229,14 @@ struct ReviewView: View {
                              count: vm.userArrows.count + vm.marks.count,
                              onClear: { vm.userArrows = []; vm.marks = [] })
 
-                BoardView(position: vm.position,
+                BoardView(position: vm.boardPosition,
                           flipped: vm.flipped,
-                          lastMove: vm.lastMove,
-                          arrow: vm.bestArrow,
-                          badge: vm.currentReview?.classification,
+                          lastMove: vm.boardLastMove,
+                          selected: vm.sbSelected,
+                          legalTargets: vm.sbTargets,
+                          arrow: vm.sandbox != nil ? vm.sbArrow : vm.bestArrow,
+                          badge: vm.sandbox != nil ? vm.sbVerdict?.classification : vm.currentReview?.classification,
+                          onTap: { vm.tapBoard($0) },
                           drawingMode: vm.arrowMode,
                           userArrows: vm.userArrows,
                           onArrow: { vm.userArrows.toggle($0) },
@@ -149,6 +274,15 @@ struct ReviewView: View {
                 }
             }
         }
+        .confirmationDialog("Phong cấp thành", isPresented: Binding(
+            get: { vm.sbPending != nil },
+            set: { _ in })) {
+            Button("Hậu") { vm.sbChoosePromotion(.queen) }
+            Button("Xe") { vm.sbChoosePromotion(.rook) }
+            Button("Tượng") { vm.sbChoosePromotion(.bishop) }
+            Button("Mã") { vm.sbChoosePromotion(.knight) }
+            Button("Hủy", role: .cancel) { vm.sbPending = nil }
+        }
         .alert("Đã chép PGN vào bộ nhớ tạm", isPresented: $copied) {
             Button("OK", role: .cancel) {}
         }
@@ -174,7 +308,30 @@ struct ReviewView: View {
 
     @ViewBuilder
     private var moveInfo: some View {
-        if let r = vm.currentReview {
+        if vm.sandbox != nil {
+            VStack(spacing: 4) {
+                if let v = vm.sbVerdict {
+                    HStack(spacing: 6) {
+                        ClassIcon(cls: v.classification).frame(width: 26, height: 26)
+                        Text("\(v.san) \(v.classification.phrase)").font(.headline)
+                    }
+                    if let best = v.bestSAN,
+                       [.good, .excellent, .inaccuracy, .mistake, .miss, .blunder].contains(v.classification) {
+                        Text("Nước tốt nhất là \(best)").font(.footnote).foregroundColor(.secondary)
+                    }
+                } else if vm.sbBusy {
+                    HStack(spacing: 6) {
+                        ProgressView()
+                        Text("Đang đánh giá nước đi…").font(.footnote).foregroundColor(.secondary)
+                    }
+                }
+                Button { vm.exitSandbox() } label: {
+                    Label("Quay lại ván gốc", systemImage: "arrow.uturn.backward")
+                }
+                .buttonStyle(.bordered)
+                .font(.subheadline)
+            }
+        } else if let r = vm.currentReview {
             VStack(spacing: 2) {
                 HStack(spacing: 6) {
                     ClassIcon(cls: r.classification)

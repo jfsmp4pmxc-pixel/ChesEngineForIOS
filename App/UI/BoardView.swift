@@ -161,6 +161,7 @@ struct BoardView: View {
     var badgeSquare: Int? = nil
 
     @AppStorage(Prefs.animateKey) private var animate = true
+    @AppStorage(Prefs.badgeScaleKey) private var badgeScale = Prefs.defaultBadgeScale
     @AppStorage(Prefs.slideDurationKey) private var slideDuration = Prefs.defaultSlideDuration
     @AppStorage(Theme.lightSquareKey) private var lightHex = Theme.defaultLight
     @AppStorage(Theme.darkSquareKey) private var darkHex = Theme.defaultDark
@@ -315,7 +316,7 @@ struct BoardView: View {
                 }
                 if let b = badge, let target = badgeSquare ?? lastMove?.to {
                     // Centred on the square's top-right corner (kept inside the board).
-                    let d = cell * 0.5
+                    let d = cell * CGFloat(badgeScale)
                     let c = center(of: target, cell: cell)
                     let x = min(max(c.x + cell / 2, d / 2), size - d / 2)
                     let y = min(max(c.y - cell / 2, d / 2), size - d / 2)
@@ -366,18 +367,9 @@ struct BoardView: View {
         let old = shown
         var newSlides: [Slide] = []
         if animate, slideDuration > 0.01 {
-            if let move = lastMove, move != shownMove,
-               let mover = old.board[move.from], new.board[move.to] != nil,
-               new.board[move.to]?.side == mover.side, new.board[move.from] == nil || move.from == move.to {
-                // A move was played: slide the piece from its old square to the new one.
-                newSlides = BoardView.makeSlides(move: move, old: old, new: new, forward: true)
-            } else if let prev = shownMove, prev != lastMove,
-                      old.board[prev.to] != nil, new.board[prev.from] != nil,
-                      old.board[prev.to]?.side == new.board[prev.from]?.side,
-                      new.make(prev) == old {
-                // A move was taken back: slide the piece home.
-                newSlides = BoardView.makeSlides(move: prev, old: old, new: new, forward: false)
-            }
+            // Works out what travelled by comparing the two boards, so it does not depend
+            // on how the position changed (a move, a take-back, a review step).
+            newSlides = BoardView.diffSlides(old: old, new: new)
         }
         let token = UUID()
         slideToken = token
@@ -393,34 +385,36 @@ struct BoardView: View {
         }
     }
 
-    /// The pieces that travel when `move` is played (`forward`) or taken back.
-    private static func makeSlides(move: Move, old: Position, new: Position, forward: Bool) -> [Slide] {
-        var result: [Slide] = []
-        // The moving piece stands on the destination after the move, or on the origin
-        // square when the move is taken back.
-        let mover = forward ? new.board[move.to] : new.board[move.from]
-        if let p = mover {
-            var slide = Slide(piece: p,
-                              from: forward ? move.from : move.to,
-                              to: forward ? move.to : move.from)
-            if forward, let taken = old.board[move.to], taken.side != p.side {
-                slide.captured = taken
-            }
-            result.append(slide)
+    /// Pairs each piece that appeared on a square with the same piece that left another
+    /// one (a promotion pairs a pawn with the new piece). Big changes are not animated.
+    private static func diffSlides(old: Position, new: Position) -> [Slide] {
+        var removed: [(sq: Int, piece: Piece)] = []
+        var added: [(sq: Int, piece: Piece)] = []
+        for sq in 0..<64 {
+            let a = old.board[sq]
+            let b = new.board[sq]
+            if a == b { continue }
+            if let a = a { removed.append((sq, a)) }
+            if let b = b { added.append((sq, b)) }
         }
-        // Castling moves the rook as well.
-        let king = forward ? old.board[move.from] : new.board[move.from]
-        if let k = king, k.type == .king, abs(move.to - move.from) == 2 {
-            let rank = move.from / 8
-            let kingside = move.to > move.from
-            let rookFrom = rank * 8 + (kingside ? 7 : 0)
-            let rookTo = rank * 8 + (kingside ? 5 : 3)
-            let rook = forward ? new.board[rookTo] : new.board[rookFrom]
-            if let r = rook {
-                result.append(Slide(piece: r,
-                                    from: forward ? rookFrom : rookTo,
-                                    to: forward ? rookTo : rookFrom))
+        guard !added.isEmpty, added.count <= 2, removed.count <= 3 else { return [] }
+
+        var used = Set<Int>()
+        var result: [Slide] = []
+        for add in added {
+            var match = removed.first(where: { !used.contains($0.sq) && $0.piece == add.piece })
+            if match == nil {
+                match = removed.first(where: {
+                    !used.contains($0.sq) && $0.piece.side == add.piece.side
+                        && (($0.piece.type == .pawn) != (add.piece.type == .pawn))
+                })
             }
+            guard let m = match else { continue }
+            used.insert(m.sq)
+            var slide = Slide(piece: add.piece, from: m.sq, to: add.sq)
+            // A piece that was standing on the destination and is gone now was taken.
+            if let taken = old.board[add.sq], taken.side != add.piece.side { slide.captured = taken }
+            result.append(slide)
         }
         return result
     }
