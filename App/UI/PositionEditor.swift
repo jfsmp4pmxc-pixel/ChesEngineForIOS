@@ -5,15 +5,11 @@ enum PositionRules {
     /// Why `pos` cannot be played from, or nil when it is fine.
     static func problem(in pos: Position) -> String? {
         var kings = [0, 0]
-        var pawns = [0, 0]
-        var pieces = [0, 0]
         for sq in 0..<64 {
             guard let p = pos.board[sq] else { continue }
             let s = p.side.rawValue
-            pieces[s] += 1
             if p.type == .king { kings[s] += 1 }
             if p.type == .pawn {
-                pawns[s] += 1
                 if sq < 8 || sq >= 56 {
                     return "Tốt không được đứng ở hàng 1 hoặc hàng 8 (đến hàng cuối là phải phong cấp)."
                 }
@@ -21,8 +17,6 @@ enum PositionRules {
         }
         if kings[0] != 1 { return "Phải có đúng một vua trắng." }
         if kings[1] != 1 { return "Phải có đúng một vua đen." }
-        if pawns[0] > 8 || pawns[1] > 8 { return "Mỗi bên có tối đa 8 tốt." }
-        if pieces[0] > 16 || pieces[1] > 16 { return "Mỗi bên có tối đa 16 quân." }
 
         guard let wk = pos.kingSquare(.white), let bk = pos.kingSquare(.black) else { return "Thiếu vua." }
         if abs(wk % 8 - bk % 8) <= 1 && abs(wk / 8 - bk / 8) <= 1 {
@@ -32,11 +26,18 @@ enum PositionRules {
             let name = pos.turn.opposite == .white ? "trắng" : "đen"
             return "Vua \(name) đang bị chiếu nhưng không phải lượt của bên \(name). Hãy đổi bên đi trước hoặc sửa lại thế cờ."
         }
-        switch pos.status() {
-        case .checkmate: return "Thế cờ này đã chiếu hết, không còn nước nào để đi."
-        case .stalemate: return "Thế cờ này đã bí cờ (hòa), không còn nước nào để đi."
-        case .insufficientMaterial: return "Không đủ quân để chiếu hết (hòa ngay)."
-        default: break
+        if pos.status() == .insufficientMaterial { return "Không đủ quân để chiếu hết (hòa ngay)." }
+        // Whichever side is given the move, it must have a legal move.
+        for side in [Side.white, Side.black] {
+            var test = pos
+            test.turn = side
+            test.epSquare = nil
+            if test.legalMoves().isEmpty {
+                let name = side == .white ? "trắng" : "đen"
+                return test.inCheck
+                    ? "Nếu bên \(name) đi trước thì bị chiếu hết, không còn nước hợp lệ. Hãy sửa lại thế cờ."
+                    : "Nếu bên \(name) đi trước thì bị bí cờ (không có nước hợp lệ nào), tức là hòa. Hãy sửa lại thế cờ."
+            }
         }
         return nil
     }
@@ -277,7 +278,7 @@ struct PositionEditorView: View {
     private var rules: some View {
         VStack(alignment: .leading, spacing: 3) {
             Text("Quy tắc").font(.caption.weight(.semibold))
-            Text("• Chọn quân rồi chạm ô để đặt; chạm lại cùng quân để gỡ.\n• Phải có đúng một vua trắng và một vua đen, không đứng sát nhau và không đặt vào ô bị chiếu.\n• Không đặt tốt ở hàng 1 hoặc hàng 8; mỗi bên tối đa 8 tốt và 16 quân.\n• Bên không đến lượt không được đang bị chiếu.\n• Thế cờ đã chiếu hết, bí cờ hoặc không đủ quân thì không dùng được.")
+            Text("• Chọn quân rồi chạm ô để đặt; chạm lại cùng quân để gỡ.\n• Phải có đúng một vua trắng và một vua đen, không đứng sát nhau và không đặt vào ô bị chiếu.\n• Không đặt tốt ở hàng 1 hoặc hàng 8. Số tốt và số quân khác không bị giới hạn (chỉ giới hạn vua).\n• Bên không đến lượt không được đang bị chiếu.\n• Dù cho bên nào đi trước, bên đó cũng phải có ít nhất một nước hợp lệ (không chiếu hết, không bí cờ); không đủ quân để chiếu hết cũng không dùng được.")
                 .font(.caption)
                 .foregroundColor(.secondary)
         }
