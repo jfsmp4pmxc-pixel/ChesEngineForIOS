@@ -499,11 +499,11 @@ enum ReviewAnalyzer {
     /// the moved piece, danger it was already in on its old square is not counted again.
     private static func sacrificeValue(pos: Position, move: Move) -> Int {
         guard let moving = pos.board[move.from] else { return 0 }
-        // A king move is never a sacrifice. And when the mover was in check, a piece left
-        // hanging is a by-product of escaping, not a deliberate abandonment, so only the
-        // moved piece (e.g. a block) can count then.
-        if moving.type == .king { return 0 }
-        let inCheck = pos.inCheck
+        // Answering a check (moving the king, capturing the checker or blocking) is the
+        // normal reply, so a piece left hanging by it is not a deliberate sacrifice.
+        // Without a check any move counts: a king move or a pawn move that deliberately
+        // leaves a piece to be taken is as much a sacrifice as moving the piece itself.
+        if pos.inCheck { return 0 }
         let mover = moving.side
         let opponent = mover.opposite
         let captured = pos.board[move.to]?.type.value ?? 0
@@ -518,7 +518,7 @@ enum ReviewAnalyzer {
                 // The piece that moved: only the extra danger it walked into.
                 let already = pos.see(on: move.from, by: opponent)
                 risk = max(risk, now - already)
-            } else if !inCheck {
+            } else {
                 // A piece that stayed behind and is left to be taken.
                 risk = max(risk, now)
             }
