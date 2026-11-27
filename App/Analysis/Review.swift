@@ -418,16 +418,19 @@ enum ReviewAnalyzer {
             // Obvious moves are never Great: taking material that is simply free, pulling a
             // hanging piece out of danger, or getting out of check when there are few ways.
             var obvious = false
-            if let taken = pos.board[move.to], taken.side != mover, pos.see(on: move.to, by: mover) > 0 {
+            // Any capture that does not lose material (free pieces and even trades) is routine.
+            if let taken = pos.board[move.to], taken.side != mover, pos.see(on: move.to, by: mover) >= 0 {
                 obvious = true
             }
             if pos.see(on: move.from, by: opponentSide) > 0, next.see(on: move.to, by: opponentSide) <= 0 {
                 obvious = true
             }
-            if pos.inCheck, legalCount <= 3 { obvious = true }
+            // Getting out of check is never Great: the choice is forced by the rules.
+            if pos.inCheck { obvious = true }
+            if move.promotion != nil { obvious = true }
             // Only-move Great: every alternative is much worse (a gap of 20 points of win
             // probability or more), in a position that is not already crushing.
-            let onlyGoodMove = gapToSecond >= 0.20 && pBefore < 0.85 && pAfter >= 0.35 && !obvious
+            let onlyGoodMove = gapToSecond >= 0.25 && pBefore < 0.75 && pAfter >= 0.35 && !obvious
             // A plain recapture (taking back on the square where the opponent just took) is
             // the natural answer to an exchange, so it is only Great when it truly turns
             // the game around, not merely because not recapturing would lose a piece.
@@ -436,7 +439,9 @@ enum ReviewAnalyzer {
                prev.position.board[prev.move.to] != nil {
                 isRecapture = true
             }
-            let turnaround = pBefore < 0.50 && pAfter >= 0.70 && atMost(epl, 0.02)
+            // Turning the game around must also be unique: the second-best move falls well short.
+            let turnaround = pBefore < 0.45 && pAfter >= 0.70 && atMost(epl, 0.02)
+                && gapToSecond >= 0.20 && !obvious
             let great = isRecapture
                 ? turnaround
                 : ((onlyGoodMove && atMost(epl, 0.02)) || turnaround)
@@ -494,6 +499,11 @@ enum ReviewAnalyzer {
     /// the moved piece, danger it was already in on its old square is not counted again.
     private static func sacrificeValue(pos: Position, move: Move) -> Int {
         guard let moving = pos.board[move.from] else { return 0 }
+        // A king move is never a sacrifice. And when the mover was in check, a piece left
+        // hanging is a by-product of escaping, not a deliberate abandonment, so only the
+        // moved piece (e.g. a block) can count then.
+        if moving.type == .king { return 0 }
+        let inCheck = pos.inCheck
         let mover = moving.side
         let opponent = mover.opposite
         let captured = pos.board[move.to]?.type.value ?? 0
@@ -508,7 +518,7 @@ enum ReviewAnalyzer {
                 // The piece that moved: only the extra danger it walked into.
                 let already = pos.see(on: move.from, by: opponent)
                 risk = max(risk, now - already)
-            } else {
+            } else if !inCheck {
                 // A piece that stayed behind and is left to be taken.
                 risk = max(risk, now)
             }
