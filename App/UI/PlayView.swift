@@ -74,6 +74,8 @@ final class PlayViewModel: ObservableObject {
     @Published var botFilename: String = ""
     /// Chosen time control for the next game (-1 = unlimited).
     @Published var timeControlID: Int = -1
+    /// Custom start position (FEN) for the next game; nil = the usual start.
+    @Published var customFEN: String? = nil
 
     private(set) var humanSide: Side = .white
     private var generation = UUID()
@@ -251,7 +253,7 @@ final class PlayViewModel: ObservableObject {
             liveEvals[ply + 1] = after
 
             let ucis = moves.prefix(ply + 1).map { $0.uci }
-            let isBook = Openings.bookPlies(for: Array(ucis)) > ply
+            let isBook = positions[0] == Position.start && Openings.bookPlies(for: Array(ucis)) > ply
             let result = try await ReviewAnalyzer.classify(position: positions[ply],
                                                            move: moves[ply],
                                                            next: positions[ply + 1],
@@ -363,7 +365,11 @@ final class PlayViewModel: ObservableObject {
         resetLive()
         userArrows = []
         marks = []
-        session = GameSession()
+        if let fen = customFEN, Position(fen: fen) != nil {
+            session = GameSession(startFEN: fen)
+        } else {
+            session = GameSession()
+        }
         startClock()
         recordID = UUID()
         started = Date()
@@ -857,6 +863,15 @@ private struct SetupSheet: View {
                                 ForEach(bots.bots) { Text($0.name).tag($0.filename) }
                             }
                         }
+                    }
+                }
+                Section(header: Text("Thế cờ"),
+                        footer: Text(vm.customFEN == nil ? "Ván bắt đầu từ thế cờ chuẩn." : "Ván sẽ bắt đầu từ thế cờ tuỳ chỉnh.")) {
+                    NavigationLink("Thiết lập thế cờ tuỳ chỉnh…") {
+                        PositionEditorView(customFEN: $vm.customFEN)
+                    }
+                    if vm.customFEN != nil {
+                        Button("Dùng lại thế cờ chuẩn", role: .destructive) { vm.customFEN = nil }
                     }
                 }
                 Section(header: Text("Thời gian")) {

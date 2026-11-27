@@ -301,7 +301,7 @@ struct ReviewView: View {
             }
             .font(.subheadline)
             .foregroundColor(.secondary)
-            if let opening = vm.record.review?.opening ?? Openings.name(for: vm.moves.map { $0.uci }) {
+            if let opening = vm.record.review?.opening ?? (vm.positions[0] == Position.start ? Openings.name(for: vm.moves.map { $0.uci }) : nil) {
                 Text(opening).font(.footnote).foregroundColor(.secondary)
             }
         }

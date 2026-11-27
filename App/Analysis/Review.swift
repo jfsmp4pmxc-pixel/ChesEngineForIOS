@@ -267,7 +267,8 @@ enum ReviewAnalyzer {
 
         // 2. Classify each move.
         let ucis = moves.map { $0.uci }
-        let bookPlies = Openings.bookPlies(for: ucis)
+        // The opening book only applies to games that start from the usual position.
+        let bookPlies = positions[0] == Position.start ? Openings.bookPlies(for: ucis) : 0
         var reviews: [MoveReview] = []
         var whiteAcc: [Double] = []
         var blackAcc: [Double] = []
@@ -313,7 +314,7 @@ enum ReviewAnalyzer {
                           blackAccuracy: combine(blackAcc),
                           whiteCounts: whiteCounts,
                           blackCounts: blackCounts,
-                          opening: Openings.name(for: ucis),
+                          opening: positions[0] == Position.start ? Openings.name(for: ucis) : nil,
                           engine: "\(StockfishEngine.versionName) (\(profile.title))",
                           depth: profile.analysisDepth,
                           generatedAt: Date())
