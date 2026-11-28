@@ -17,7 +17,36 @@ enum ColorChoice: String, CaseIterable, Identifiable {
 }
 
 /// A clock setting: base time plus an increment added after every move.
+/// Remaining time of both sides (seconds). Observed only by the clock labels.
+final class ClockModel: ObservableObject {
+    @Published var white: Double = 0
+    @Published var black: Double = 0
+}
+
+/// A clock label that always shows milliseconds: m:ss.mmm
+struct ClockText: View {
+    @ObservedObject var clock: ClockModel
+    let side: Side
+    let running: Bool
+
+    var body: some View {
+        let t = side == .white ? clock.white : clock.black
+        let ms = max(0, Int((t * 1000).rounded(.down)))
+        let text = String(format: "%d:%02d.%03d", ms / 60000, (ms / 1000) % 60, ms % 1000)
+        return Text(text)
+            .font(.system(.title3, design: .monospaced).weight(.semibold))
+            .foregroundColor(t < 10 ? .red : .primary)
+            .padding(.horizontal, 8)
+            .padding(.vertical, 2)
+            .background(RoundedRectangle(cornerRadius: 6)
+                .fill(running ? Color.accentColor.opacity(0.25) : Color.secondary.opacity(0.12)))
+    }
+}
+
 struct TimeControl: Identifiable, Equatable {
+    /// Id used for the player's own time setting.
+    static let customID = 100
+
     let id: Int
     let name: String
     let base: Double
@@ -53,9 +82,8 @@ final class PlayViewModel: ObservableObject {
     @Published var userArrows: [BoardArrow] = []
     @Published var markMode = false
     @Published var marks: Set<Int> = []
-    /// Clocks (seconds left); only meaningful when `activeControl` is set.
-    @Published var whiteTime: Double = 0
-    @Published var blackTime: Double = 0
+    /// Clocks live in their own object so the board is not redrawn every few milliseconds.
+    let clock = ClockModel()
     /// Live verdicts by move index, and moves whose analysis failed.
     @Published var live: [Int: LiveMove] = [:]
     @Published var liveFailed: Set<Int> = []
@@ -74,6 +102,10 @@ final class PlayViewModel: ObservableObject {
     @Published var botFilename: String = ""
     /// Chosen time control for the next game (-1 = unlimited).
     @Published var timeControlID: Int = -1
+    /// Settings of the custom time control (TimeControl.customID).
+    @Published var customMinutes: Int = 3
+    @Published var customSeconds: Int = 0
+    @Published var customIncrement: Int = 2
     /// Custom start position (FEN) for the next game; nil = the usual start.
     @Published var customFEN: String? = nil
 
@@ -111,12 +143,19 @@ final class PlayViewModel: ObservableObject {
     private func startClock() {
         clockTimer?.invalidate()
         clockTimer = nil
-        activeControl = TimeControl.all.first(where: { $0.id == timeControlID })
+        if timeControlID == TimeControl.customID {
+            let base = Double(customMinutes * 60 + customSeconds)
+            activeControl = base > 0
+                ? TimeControl(id: TimeControl.customID, name: "Tuỳ chỉnh", base: base, increment: Double(customIncrement))
+                : nil
+        } else {
+            activeControl = TimeControl.all.first(where: { $0.id == timeControlID })
+        }
         guard let tc = activeControl else { return }
-        whiteTime = tc.base
-        blackTime = tc.base
+        clock.white = tc.base
+        clock.black = tc.base
         lastTick = Date()
-        let t = Timer(timeInterval: 0.1, repeats: true) { [weak self] _ in self?.tick() }
+        let t = Timer(timeInterval: 0.02, repeats: true) { [weak self] _ in self?.tick() }
         RunLoop.main.add(t, forMode: .common)
         clockTimer = t
     }
@@ -135,8 +174,8 @@ final class PlayViewModel: ObservableObject {
         if session.isOver { stopClock(); return }
         guard session.moves.count >= 2 else { return }
         let side = session.position.turn
-        if side == .white { whiteTime = max(0, whiteTime - dt) } else { blackTime = max(0, blackTime - dt) }
-        if (side == .white ? whiteTime : blackTime) <= 0 { flag(side) }
+        if side == .white { clock.white = max(0, clock.white - dt) } else { clock.black = max(0, clock.black - dt) }
+        if (side == .white ? clock.white : clock.black) <= 0 { flag(side) }
     }
 
     private func flag(_ side: Side) {
@@ -149,7 +188,6 @@ final class PlayViewModel: ObservableObject {
         persist()
     }
 
-    func timeLeft(_ side: Side) -> Double { side == .white ? whiteTime : blackTime }
 
     var clockRunningSide: Side? {
         guard activeControl != nil, !session.isOver, session.moves.count >= 2 else { return nil }
@@ -159,7 +197,7 @@ final class PlayViewModel: ObservableObject {
     private func addIncrement() {
         guard let tc = activeControl, tc.increment > 0, session.moves.count > 2 else { return }
         // The side that just moved gets the increment.
-        if session.position.turn == .white { blackTime += tc.increment } else { whiteTime += tc.increment }
+        if session.position.turn == .white { clock.black += tc.increment } else { clock.white += tc.increment }
     }
 
     // MARK: Live analysis
@@ -568,19 +606,28 @@ final class PlayViewModel: ObservableObject {
         Task { @MainActor in
             var chosen: Move? = nil
             var problem: String? = nil
+            var fallbackNote: String? = nil
 
             switch kind {
             case .stockfish:
-                let r = await StockfishEngine.shared.search(fen: fen,
-                                                            depth: level.depth,
-                                                            movetimeMs: level.movetimeMs,
-                                                            multiPV: 1,
-                                                            strength: level.strength,
-                                                            profile: Prefs.profile)
-                if let r = r {
-                    if let uci = r.bestMove { chosen = pos.move(fromUCI: uci) }
+                if pos.isSafeForEngine {
+                    let r = await StockfishEngine.shared.search(fen: fen,
+                                                                depth: level.depth,
+                                                                movetimeMs: level.movetimeMs,
+                                                                multiPV: 1,
+                                                                strength: level.strength,
+                                                                profile: Prefs.profile)
+                    if let r = r {
+                        if let uci = r.bestMove { chosen = pos.move(fromUCI: uci) }
+                    } else {
+                        problem = StockfishEngine.shared.startupError ?? "Stockfish không phản hồi."
+                    }
                 } else {
-                    problem = StockfishEngine.shared.startupError ?? "Stockfish không phản hồi."
+                    // More than 32 pieces (or otherwise outside what Stockfish accepts):
+                    // use the simple built-in player instead of risking a crash.
+                    chosen = await Task.detached { SimpleEngine.bestMove(pos) }.value
+                    fallbackNote = "Thế cờ có hơn 32 quân nên Stockfish không dùng được; máy chơi ở chế độ đơn giản."
+                    if chosen == nil { problem = "Đối thủ không có nước hợp lệ." }
                 }
             case .python:
                 if let bot = bot {
@@ -600,6 +647,7 @@ final class PlayViewModel: ObservableObject {
             guard gen == generation else { return }
             thinking = false
             if let m = chosen {
+                if let note = fallbackNote { message = note }
                 session.play(m)
                 afterMove()
                 await runPremove(generation: gen)
@@ -773,22 +821,7 @@ struct PlayView: View {
     }
 
     private func clockText(_ side: Side) -> some View {
-        let t = vm.timeLeft(side)
-        let running = vm.clockRunningSide == side
-        let text: String
-        if t < 10 {
-            text = String(format: "0:%04.1f", t)
-        } else {
-            let whole = Int(t.rounded(.up))
-            text = String(format: "%d:%02d", whole / 60, whole % 60)
-        }
-        return Text(text)
-            .font(.system(.title3, design: .monospaced).weight(.semibold))
-            .foregroundColor(t < 10 ? .red : .primary)
-            .padding(.horizontal, 8)
-            .padding(.vertical, 2)
-            .background(RoundedRectangle(cornerRadius: 6)
-                .fill(running ? Color.accentColor.opacity(0.25) : Color.secondary.opacity(0.12)))
+        ClockText(clock: vm.clock, side: side, running: vm.clockRunningSide == side)
     }
 
     private var controls: some View {
@@ -878,6 +911,15 @@ private struct SetupSheet: View {
                     Picker("Thời gian", selection: $vm.timeControlID) {
                         Text("Không giới hạn").tag(-1)
                         ForEach(TimeControl.all) { Text($0.name).tag($0.id) }
+                        Text("Tuỳ chỉnh…").tag(TimeControl.customID)
+                    }
+                    if vm.timeControlID == TimeControl.customID {
+                        Stepper("Phút: \(vm.customMinutes)", value: $vm.customMinutes, in: 0...180)
+                        Stepper("Giây: \(vm.customSeconds)", value: $vm.customSeconds, in: 0...59)
+                        Stepper("Cộng thêm mỗi nước: \(vm.customIncrement) giây", value: $vm.customIncrement, in: 0...60)
+                        if vm.customMinutes * 60 + vm.customSeconds == 0 {
+                            Text("Cần ít nhất 1 giây.").font(.footnote).foregroundColor(.red)
+                        }
                     }
                 }
                 if vm.opponent != .human {

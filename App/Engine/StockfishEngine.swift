@@ -296,12 +296,17 @@ extension Position {
     /// first or last rank, and the side that is not to move is not in check.
     var isSafeForEngine: Bool {
         var kings = [0, 0]
+        var total = 0
         for sq in 0..<64 {
             guard let p = board[sq] else { continue }
+            total += 1
             if p.type == .king { kings[p.side.rawValue] += 1 }
             if p.type == .pawn && (sq < 8 || sq >= 56) { return false }
         }
         guard kings[0] == 1, kings[1] == 1 else { return false }
+        // Stockfish's network and piece lists are sized for at most 32 pieces; more than
+        // that overruns them and crashes the app.
+        if total > 32 { return false }
         if let k = kingSquare(turn.opposite), isAttacked(k, by: turn) { return false }
         return true
     }

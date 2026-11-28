@@ -332,6 +332,9 @@ enum ReviewAnalyzer {
         case .stalemate, .insufficientMaterial, .fiftyMoveRule:
             return PositionEval(eval: .draw, best: nil, second: nil)
         case .ongoing:
+            guard pos.isSafeForEngine else {
+                throw AnalysisError(message: "Thế cờ có hơn 32 quân (hoặc không hợp lệ) nên Stockfish không phân tích được.")
+            }
             let result = await StockfishEngine.shared.search(
                 fen: pos.fen,
                 depth: profile.analysisDepth,
@@ -514,6 +517,11 @@ enum ReviewAnalyzer {
         for sq in 0..<64 {
             guard let p = next.board[sq], p.side == mover, p.type != .king, p.type != .pawn else { continue }
             guard replies.contains(where: { $0.to == sq }) else { continue }
+            // A valuable piece (rook or queen) that is protected is not given away for
+            // nothing: the opponent has to trade, so it is not counted as a sacrifice.
+            if p.type.value >= 5, !next.attackers(of: sq, by: mover, removed: [], firstOnly: true).isEmpty {
+                continue
+            }
             let now = next.see(on: sq, by: opponent)
             if sq == move.to {
                 // The piece that moved: only the extra danger it walked into.

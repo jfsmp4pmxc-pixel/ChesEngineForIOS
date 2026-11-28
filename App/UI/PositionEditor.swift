@@ -278,7 +278,7 @@ struct PositionEditorView: View {
     private var rules: some View {
         VStack(alignment: .leading, spacing: 3) {
             Text("Quy tắc").font(.caption.weight(.semibold))
-            Text("• Chọn quân rồi chạm ô để đặt; chạm lại cùng quân để gỡ.\n• Phải có đúng một vua trắng và một vua đen, không đứng sát nhau và không đặt vào ô bị chiếu.\n• Không đặt tốt ở hàng 1 hoặc hàng 8. Số tốt và số quân khác không bị giới hạn (chỉ giới hạn vua).\n• Bên không đến lượt không được đang bị chiếu.\n• Dù cho bên nào đi trước, bên đó cũng phải có ít nhất một nước hợp lệ (không chiếu hết, không bí cờ); không đủ quân để chiếu hết cũng không dùng được.")
+            Text("• Chọn quân rồi chạm ô để đặt; chạm lại cùng quân để gỡ.\n• Phải có đúng một vua trắng và một vua đen, không đứng sát nhau và không đặt vào ô bị chiếu.\n• Không đặt tốt ở hàng 1 hoặc hàng 8. Số tốt và số quân khác không bị giới hạn (chỉ giới hạn vua). Lưu ý: Stockfish chỉ xử lý được tối đa 32 quân; thế cờ nhiều hơn vẫn chơi được nhưng máy dùng chế độ đơn giản và không phân tích được.\n• Bên không đến lượt không được đang bị chiếu.\n• Dù cho bên nào đi trước, bên đó cũng phải có ít nhất một nước hợp lệ (không chiếu hết, không bí cờ); không đủ quân để chiếu hết cũng không dùng được.")
                 .font(.caption)
                 .foregroundColor(.secondary)
         }
